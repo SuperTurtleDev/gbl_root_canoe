@@ -461,15 +461,6 @@ typedef struct {
   UINT64                 Blocks;
 } SFB_FAT_BLOB_DISK;
 
-/* This vendor tree's DevicePath.h carries MEDIA_VENDOR_DP but no
- * VENDOR_MEDIA_DEVICE_PATH typedef, so the node is spelled out here. */
-#pragma pack(1)
-typedef struct {
-  EFI_DEVICE_PATH_PROTOCOL  Header;
-  EFI_GUID                  Guid;
-} SFB_VENDOR_MEDIA_DP;
-#pragma pack()
-
 typedef struct {
   EFI_HANDLE         Source;    /* ext4 SFS handle the blob file lives under */
   EFI_HANDLE         Disk;      /* handle carrying our BlockIo + DevicePath */
@@ -664,13 +655,15 @@ SfbMountEfispFatVolumes (VOID)
     Blob->BlkIo.FlushBlocks = NULL;
 
     /* One vendor-media node plus an end node: enough of a device path for the
-     * resident drivers to bind, and a namespace of our own. */
-    Path = AllocateZeroPool (sizeof (SFB_VENDOR_MEDIA_DP) +
+     * resident drivers to bind, and a namespace of our own. VENDOR_DEVICE_PATH
+     * is this tree's own generic vendor-node struct (DevicePath.h line 150);
+     * the media flavour comes from the Type/SubType pair below. */
+    Path = AllocateZeroPool (sizeof (VENDOR_DEVICE_PATH) +
                              sizeof (EFI_DEVICE_PATH_PROTOCOL));
     if (Path != NULL) {
-      SFB_VENDOR_MEDIA_DP   *Node = (SFB_VENDOR_MEDIA_DP *)Path;
-      EFI_DEVICE_PATH_PROTOCOL  *End =
-        (EFI_DEVICE_PATH_PROTOCOL *)(Path + sizeof (SFB_VENDOR_MEDIA_DP));
+      VENDOR_DEVICE_PATH          *Node = (VENDOR_DEVICE_PATH *)Path;
+      EFI_DEVICE_PATH_PROTOCOL    *End =
+        (EFI_DEVICE_PATH_PROTOCOL *)(Path + sizeof (VENDOR_DEVICE_PATH));
 
       Node->Header.Type = MEDIA_DEVICE_PATH;
       Node->Header.SubType = MEDIA_VENDOR_DP;
