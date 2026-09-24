@@ -11,6 +11,7 @@
  */
 
 #include "SuperFbMenu.h"
+#include "SuperFbImageDisk.h"
 
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
@@ -436,125 +437,196 @@ SfbOpenVolumeRoot (IN EFI_HANDLE Volume, OUT EFI_FILE_PROTOCOL **Root)
 
 /*
  * A FAT boot blob kept as the \efisp.fat file inside the ext4 persist
- * partition. The file is published as a read-only 512-byte BlockIo disk on its
- * own handle; the resident DiskIo/FAT drivers then bind to it after a connect
- * pass, and the FAT filesystem inside the blob shows up as an ordinary FAT
- * volume - scanned at its root like any other FAT media, and browsable from
- * its root in the file browser. The backing file stays open for the whole
- * session: the ext4 driver here is read-only, so nothing ever writes through.
+ * partition, mounted the way the 7.x line mounts its boot-root container: the
+ * file's ext4 extent map is frozen once, and the published image disk reads
+ * and writes the parent persist disk directly through that map. Nothing goes
+ * through the EFI file protocol after the map exists - the ext4 driver here is
+ * read-only, so it cannot write, and calling back into it from inside a
+ * driver-binding connect pass deadlocks. The resulting volume is an ordinary
+ * FAT filesystem: scanned at its root like any other FAT media, browsable from
+ * its root in the file browser, and writable within the blob's frozen extents.
  */
-#define SFB_FAT_BLOB_BLOCK_BYTES  512
-#define SFB_FAT_BLOB_MIN_BYTES    (64U * 1024U)
-#define SFB_FAT_BLOB_MAX_MOUNTS   4
-#define SFB_FAT_BLOB_MEDIA_ID     0x46415442  /* 'FATB' */
+#define SFB_FAT_BLOB_MAX_MOUNTS  4
 
-/* Distinguishes the blob image-disk handles in the device path namespace. */
-STATIC CONST EFI_GUID mSfbFatBlobDevPathGuid = {
-  0x1f4d1d61, 0x6e4b, 0x4d3e,
-  { 0x9d, 0x0f, 0x2f, 0x8e, 0xd1, 0x3f, 0x22, 0x90 }
+/* Distinguishes the blob image-disk child node in the parent's device path. */
+STATIC CONST EFI_GUID mSfbFatBlobPathGuid = {
+  0xf1086281, 0xc184, 0x47f7, { 0xbb, 0xae, 0x30, 0x61, 0x1f, 0x90, 0xe2, 0xa4 }
 };
 
 typedef struct {
-  EFI_BLOCK_IO_PROTOCOL  BlkIo;
-  EFI_BLOCK_IO_MEDIA     Media;
-  EFI_FILE_PROTOCOL      *File;
-  UINT64                 Blocks;
-} SFB_FAT_BLOB_DISK;
-
-typedef struct {
-  EFI_HANDLE         Source;    /* ext4 SFS handle the blob file lives under */
-  EFI_HANDLE         Disk;      /* handle carrying our BlockIo + DevicePath */
-  SFB_FAT_BLOB_DISK  *Blob;
+  EFI_HANDLE                Source;  /* ext4 volume handle the blob lives on */
+  EFI_HANDLE                Disk;    /* published image-disk handle */
+  EFI_DEVICE_PATH_PROTOCOL  *Path;
+  EXT4_IMAGE_MAP            *Map;    /* owned; freed at teardown */
+  SFB_IMAGE_DISK            ImageDisk;
 } SFB_FAT_BLOB_MOUNT;
 
 STATIC SFB_FAT_BLOB_MOUNT  mSfbFatBlobMounts[SFB_FAT_BLOB_MAX_MOUNTS];
 STATIC UINTN               mSfbFatBlobMountCount = 0;
 
+/*
+ * Tear one mount down, mirroring the 7.x container unmount order: disconnect
+ * the FAT stack, flush, withdraw the protocols, free the map, then invalidate
+ * the ext4 driver's cached view of the file.
+ */
 STATIC
-EFI_STATUS
-EFIAPI
-SfbFatBlobReadBlocks (IN EFI_BLOCK_IO_PROTOCOL *This,
-                      IN UINT32                MediaId,
-                      IN EFI_LBA               Lba,
-                      IN UINTN                 BufferSize,
-                      OUT VOID                 *Buffer)
+VOID
+SfbFatBlobUnmount (IN OUT SFB_FAT_BLOB_MOUNT *Mount)
 {
-  SFB_FAT_BLOB_DISK  *Blob = (SFB_FAT_BLOB_DISK *)This;
-  EFI_STATUS         Status;
-  UINTN              Size;
+  EFI_STATUS  Status;
 
-  if (MediaId != Blob->Media.MediaId) {
-    return EFI_MEDIA_CHANGED;
+  if (Mount->Disk != NULL) {
+    Status = gBS->DisconnectController (Mount->Disk, NULL, NULL);
+    if (EFI_ERROR (Status) && Status != EFI_NOT_FOUND) {
+      DEBUG ((EFI_D_ERROR, "SFB: blob disconnect: %r\n", Status));
+    }
+    if (Mount->ImageDisk.Active && Mount->ImageDisk.Block.FlushBlocks != NULL) {
+      (VOID)Mount->ImageDisk.Block.FlushBlocks (&Mount->ImageDisk.Block);
+    }
+    (VOID)gBS->UninstallMultipleProtocolInterfaces (
+                 Mount->Disk,
+                 &gEfiBlockIoProtocolGuid, &Mount->ImageDisk.Block,
+                 &gEfiDevicePathProtocolGuid, Mount->Path,
+                 NULL);
+    Mount->Disk = NULL;
   }
-  if (Buffer == NULL || BufferSize == 0 ||
-      (BufferSize % SFB_FAT_BLOB_BLOCK_BYTES) != 0) {
-    return EFI_INVALID_PARAMETER;
+  if (Mount->Map != NULL) {
+    SfbImageDiskDestroy (&Mount->ImageDisk);
+    FreePool (Mount->Map);
+    Mount->Map = NULL;
   }
-  if ((UINT64)Lba + BufferSize / SFB_FAT_BLOB_BLOCK_BYTES > Blob->Blocks) {
-    return EFI_INVALID_PARAMETER;
+  if (Mount->Path != NULL) {
+    FreePool (Mount->Path);
+    Mount->Path = NULL;
   }
-
-  Status = Blob->File->SetPosition (Blob->File,
-                                    (UINT64)Lba * SFB_FAT_BLOB_BLOCK_BYTES);
-  if (EFI_ERROR (Status)) {
-    return Status;
+  if (Mount->Source != NULL) {
+    Status = Ext4ReleaseImageFileSystem (Mount->Source);
+    if (EFI_ERROR (Status) && Status != EFI_NOT_FOUND) {
+      DEBUG ((EFI_D_ERROR, "SFB: blob ext4 release: %r\n", Status));
+    }
+    Mount->Source = NULL;
   }
-
-  Size = BufferSize;
-  Status = Blob->File->Read (Blob->File, &Size, Buffer);
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-  if (Size != BufferSize) {
-    return EFI_DEVICE_ERROR;
-  }
-
-  return EFI_SUCCESS;
-}
-
-STATIC
-EFI_STATUS
-EFIAPI
-SfbFatBlobWriteBlocks (IN EFI_BLOCK_IO_PROTOCOL *This,
-                       IN UINT32                MediaId,
-                       IN EFI_LBA               Lba,
-                       IN UINTN                 BufferSize,
-                       IN VOID                  *Buffer)
-{
-  (VOID)This;
-  (VOID)MediaId;
-  (VOID)Lba;
-  (VOID)BufferSize;
-  (VOID)Buffer;
-  return EFI_WRITE_PROTECTED;
-}
-
-STATIC
-EFI_STATUS
-EFIAPI
-SfbFatBlobReset (IN EFI_BLOCK_IO_PROTOCOL *This, IN BOOLEAN ExtendedVerification)
-{
-  (VOID)This;
-  (VOID)ExtendedVerification;
-  return EFI_SUCCESS;
 }
 
 /*
- * Open \efisp.fat on every ext4 volume that carries one and publish it as a
- * BlockIo disk, so the FAT stack can mount the blob. Idempotent: volumes that
- * already have a blob mount are skipped, so repeated calls (every menu
- * rebuild) only pick up newly appeared media.
+ * Mount the \efisp.fat boot blob on one ext4 volume, mirroring the 7.x
+ * container mount stage for stage. Failure anywhere leaves the volume
+ * untouched and returns the status; the caller treats it as non-fatal.
+ */
+STATIC
+EFI_STATUS
+SfbMountEfispFatOnVolume (IN EFI_HANDLE Volume, IN OUT SFB_FAT_BLOB_MOUNT *Mount)
+{
+  EFI_STATUS                       Status;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *Fs = NULL;
+  EFI_FILE_PROTOCOL                *Root = NULL;
+  EFI_FILE_PROTOCOL                *File = NULL;
+  EFI_DEVICE_PATH_PROTOCOL         *ParentPath;
+  VENDOR_DEVICE_PATH               Node;
+
+  Mount->Source = Volume;
+
+  /*
+   * Select this driver's own ext4 instance: after a RAM launch of this image
+   * the volume may still be owned by another ext4 driver copy, and the extent
+   * mapper below only accepts files from its own instance.
+   */
+  Status = Ext4OpenImageFileSystem (Volume, &Fs);
+  if (EFI_ERROR (Status) || Fs == NULL) {
+    Status = EFI_ERROR (Status) ? Status : EFI_NOT_FOUND;
+    goto Failed;
+  }
+
+  Status = Fs->OpenVolume (Fs, &Root);
+  if (EFI_ERROR (Status) || Root == NULL) {
+    goto Failed;
+  }
+
+  Status = Root->Open (Root, &File, (CHAR16 *)L"\\efisp.fat",
+                       EFI_FILE_MODE_READ, 0);
+  if (EFI_ERROR (Status) || File == NULL) {
+    Root->Close (Root);
+    Root = NULL;
+    goto Failed;
+  }
+
+  /* Freeze the extent map; the file handle is not needed afterwards. */
+  Status = Ext4MapImage (File, &Mount->Map);
+  File->Close (File);
+  Root->Close (Root);
+  if (EFI_ERROR (Status)) {
+    Mount->Map = NULL;
+    goto Failed;
+  }
+
+  Status = SfbImageDiskInit (&Mount->ImageDisk, Mount->Map);
+  if (EFI_ERROR (Status)) {
+    goto Failed;
+  }
+
+  /*
+   * A child node under the parent's real device path: drivers see the disk as
+   * part of the persist stack, not as an orphan controller. LogicalPartition
+   * is set inside the image disk, so partition drivers leave it alone and the
+   * FAT driver mounts it like removable media.
+   */
+  ParentPath = DevicePathFromHandle (Volume);
+  if (ParentPath == NULL) {
+    Status = EFI_NOT_READY;
+    goto Failed;
+  }
+  ZeroMem (&Node, sizeof (Node));
+  Node.Header.Type = MEDIA_DEVICE_PATH;
+  Node.Header.SubType = MEDIA_VENDOR_DP;
+  SetDevicePathNodeLength (&Node.Header, sizeof (Node));
+  CopyMem (&Node.Guid, &mSfbFatBlobPathGuid, sizeof (Node.Guid));
+  Mount->Path = AppendDevicePathNode (ParentPath, &Node.Header);
+  if (Mount->Path == NULL) {
+    Status = EFI_OUT_OF_RESOURCES;
+    goto Failed;
+  }
+
+  Status = gBS->InstallMultipleProtocolInterfaces (
+                  &Mount->Disk,
+                  &gEfiBlockIoProtocolGuid, &Mount->ImageDisk.Block,
+                  &gEfiDevicePathProtocolGuid, Mount->Path,
+                  NULL);
+  if (EFI_ERROR (Status)) {
+    Mount->Disk = NULL;
+    goto Failed;
+  }
+
+  /*
+   * Bind FAT to this one handle only. The 7.x line deliberately avoids a
+   * system-wide connect pass here: connecting every controller with freshly
+   * published storage under it deadlocks in driver-binding paths that re-enter
+   * the storage stack.
+   */
+  (VOID)gBS->ConnectController (Mount->Disk, NULL, NULL, TRUE);
+
+  DEBUG ((EFI_D_INFO, "SFB: efisp.fat mounted: %Lu bytes\n", Mount->Map->Bytes));
+  return EFI_SUCCESS;
+
+Failed:
+  DEBUG ((EFI_D_ERROR, "SFB: efisp.fat mount failed: %r\n", Status));
+  SfbFatBlobUnmount (Mount);
+  return Status;
+}
+
+/*
+ * Publish every ext4 volume's \efisp.fat blob as an image disk. Idempotent:
+ * volumes that already have a blob mount are skipped, so repeated calls (every
+ * menu rebuild) only pick up newly appeared media.
  */
 STATIC
 VOID
 SfbMountEfispFatVolumes (VOID)
 {
-  EFI_STATUS         Status;
-  EFI_HANDLE         *All = NULL;
-  UINTN              Count = 0;
-  UINTN              Index;
-  UINTN              Mount;
-  BOOLEAN            MountedAny = FALSE;
+  EFI_STATUS  Status;
+  EFI_HANDLE  *All = NULL;
+  UINTN       Count = 0;
+  UINTN       Index;
+  UINTN       Mount;
 
   if (!mSfbFatStackStarted) {
     return;
@@ -568,15 +640,9 @@ SfbMountEfispFatVolumes (VOID)
   }
 
   for (Index = 0; Index < Count; Index++) {
-    EFI_FILE_PROTOCOL     *Root = NULL;
-    EFI_FILE_PROTOCOL     *File = NULL;
-    EFI_FILE_INFO         *Info = NULL;
-    UINTN                 InfoSize = 0;
-    UINT64                Bytes;
-    SFB_FAT_BLOB_DISK     *Blob = NULL;
-    EFI_HANDLE            Disk = NULL;
-    UINT8                 *Path = NULL;
-    BOOLEAN               Known = FALSE;
+    EFI_FILE_PROTOCOL   *Probe = NULL;
+    SFB_FAT_BLOB_MOUNT  *Slot;
+    BOOLEAN             Known = FALSE;
 
     if (!SfbIsExt4Volume (All[Index])) {
       continue;
@@ -591,123 +657,27 @@ SfbMountEfispFatVolumes (VOID)
       continue;
     }
 
-    if (EFI_ERROR (SfbOpenVolumeRoot (All[Index], &Root)) || Root == NULL) {
+    /* Only volumes that actually carry a blob take the expensive path. */
+    if (EFI_ERROR (SfbOpenVolumeRoot (All[Index], &Probe)) || Probe == NULL) {
       continue;
     }
-    if (EFI_ERROR (Root->Open (Root, &File, (CHAR16 *)L"\\efisp.fat",
-                               EFI_FILE_MODE_READ, 0)) || File == NULL) {
-      Root->Close (Root);
-      continue;
-    }
-
-    Status = File->GetInfo (File, &gEfiFileInfoGuid, &InfoSize, NULL);
-    if (Status != EFI_BUFFER_TOO_SMALL) {
-      File->Close (File);
-      Root->Close (Root);
-      continue;
-    }
-    Info = AllocateZeroPool (InfoSize);
-    if (Info == NULL ||
-        EFI_ERROR (File->GetInfo (File, &gEfiFileInfoGuid, &InfoSize, Info))) {
-      if (Info != NULL) {
-        FreePool (Info);
-      }
-      File->Close (File);
-      Root->Close (Root);
-      continue;
-    }
-    Bytes = Info->FileSize;
-    FreePool (Info);
-
-    if (Bytes < SFB_FAT_BLOB_MIN_BYTES ||
-        (Bytes % SFB_FAT_BLOB_BLOCK_BYTES) != 0) {
-      DEBUG ((EFI_D_INFO,
-              "SFB: efisp.fat ignored, %Lu bytes is not a sane blob\n", Bytes));
-      File->Close (File);
-      Root->Close (Root);
+    Status = SfbFileExists (Probe, L"\\efisp.fat");
+    Probe->Close (Probe);
+    if (!Status) {
       continue;
     }
 
-    Blob = AllocateZeroPool (sizeof (*Blob));
-    if (Blob == NULL) {
-      File->Close (File);
-      Root->Close (Root);
+    Slot = &mSfbFatBlobMounts[mSfbFatBlobMountCount];
+    ZeroMem (Slot, sizeof (*Slot));
+    Status = SfbMountEfispFatOnVolume (All[Index], Slot);
+    if (EFI_ERROR (Status)) {
+      /* The slot was cleaned by the failure path; leave it free. */
       continue;
     }
-    Blob->File = File;   /* stays open for the session */
-    Blob->Blocks = Bytes / SFB_FAT_BLOB_BLOCK_BYTES;
-
-    Blob->Media.MediaId = SFB_FAT_BLOB_MEDIA_ID;
-    Blob->Media.RemovableMedia = FALSE;
-    Blob->Media.MediaPresent = TRUE;
-    Blob->Media.LogicalPartition = FALSE;
-    Blob->Media.ReadOnly = TRUE;
-    Blob->Media.WriteCaching = FALSE;
-    Blob->Media.BlockSize = SFB_FAT_BLOB_BLOCK_BYTES;
-    Blob->Media.LastBlock = Blob->Blocks - 1;
-    Blob->Media.IoAlign = 1;
-
-    Blob->BlkIo.Revision = EFI_BLOCK_IO_PROTOCOL_REVISION;
-    Blob->BlkIo.Media = &Blob->Media;
-    Blob->BlkIo.Reset = SfbFatBlobReset;
-    Blob->BlkIo.ReadBlocks = SfbFatBlobReadBlocks;
-    Blob->BlkIo.WriteBlocks = SfbFatBlobWriteBlocks;
-    Blob->BlkIo.FlushBlocks = NULL;
-
-    /* One vendor-media node plus an end node: enough of a device path for the
-     * resident drivers to bind, and a namespace of our own. VENDOR_DEVICE_PATH
-     * is this tree's own generic vendor-node struct (DevicePath.h line 150);
-     * the media flavour comes from the Type/SubType pair below. */
-    Path = AllocateZeroPool (sizeof (VENDOR_DEVICE_PATH) +
-                             sizeof (EFI_DEVICE_PATH_PROTOCOL));
-    if (Path != NULL) {
-      VENDOR_DEVICE_PATH          *Node = (VENDOR_DEVICE_PATH *)Path;
-      EFI_DEVICE_PATH_PROTOCOL    *End =
-        (EFI_DEVICE_PATH_PROTOCOL *)(Path + sizeof (VENDOR_DEVICE_PATH));
-
-      Node->Header.Type = MEDIA_DEVICE_PATH;
-      Node->Header.SubType = MEDIA_VENDOR_DP;
-      SetDevicePathNodeLength (&Node->Header, sizeof (*Node));
-      CopyGuid (&Node->Guid, &mSfbFatBlobDevPathGuid);
-      SetDevicePathEndNode (End);
-
-      Status = gBS->InstallMultipleProtocolInterfaces (
-                      &Disk,
-                      &gEfiBlockIoProtocolGuid, &Blob->BlkIo,
-                      &gEfiDevicePathProtocolGuid, Path,
-                      NULL);
-    } else {
-      Status = EFI_OUT_OF_RESOURCES;
-    }
-
-    if (EFI_ERROR (Status) || Disk == NULL) {
-      DEBUG ((EFI_D_ERROR, "SFB: efisp.fat publish failed: %r\n", Status));
-      File->Close (File);
-      FreePool (Blob);
-      Root->Close (Root);
-      continue;
-    }
-
-    mSfbFatBlobMounts[mSfbFatBlobMountCount].Source = All[Index];
-    mSfbFatBlobMounts[mSfbFatBlobMountCount].Disk = Disk;
-    mSfbFatBlobMounts[mSfbFatBlobMountCount].Blob = Blob;
     mSfbFatBlobMountCount++;
-    MountedAny = TRUE;
-
-    DEBUG ((EFI_D_INFO,
-            "SFB: efisp.fat published: %Lu bytes, %Lu blocks\n",
-            Bytes, Blob->Blocks));
-
-    Root->Close (Root);
   }
 
   FreePool (All);
-
-  if (MountedAny) {
-    /* DiskIo and FAT are already resident; one connect pass binds them to the
-     * new image disks so the blob's filesystem surfaces as a volume. */
-    SfbConnectAll ();
-  }
 }
 
 EFI_STATUS

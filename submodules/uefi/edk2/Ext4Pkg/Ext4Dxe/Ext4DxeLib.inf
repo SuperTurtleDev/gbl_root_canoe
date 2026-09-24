@@ -33,12 +33,14 @@
   Inode.c
   Directory.c
   Extents.c
+  ImageMap.c
   File.c
   Collation.c
   Crc32c.c
 
 [Packages]
   EmbeddedPkg/EmbeddedPkg.dec
+  Ext4Pkg/Ext4Pkg.dec
   MdePkg/MdePkg.dec
 
 [LibraryClasses]

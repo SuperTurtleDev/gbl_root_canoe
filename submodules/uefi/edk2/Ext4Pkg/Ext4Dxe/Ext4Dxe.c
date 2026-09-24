@@ -6,6 +6,7 @@
  */
 
 #include "Ext4Dxe.h"
+#include <Library/Ext4ImageMap.h>
 
 GLOBAL_REMOVE_IF_UNREFERENCED EFI_UNICODE_STRING_TABLE  mExt4DriverNameTable[] = {
   {
@@ -97,6 +98,79 @@ EFI_DRIVER_BINDING_PROTOCOL  gExt4BindingProtocol =
   Ext4Stop,
   EXT4_DRIVER_VERSION
 };
+
+/* The mapper consumes private EXT4_FILE state, so merely finding an SFS is
+ * insufficient after RAM-loading a new BDS image. Select this driver's own
+ * instance without disconnecting the lower DiskIo/BlockIo stack. */
+EFI_STATUS
+Ext4OpenImageFileSystem (EFI_HANDLE Controller, EFI_SIMPLE_FILE_SYSTEM_PROTOCOL **Fs)
+{
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Current = NULL;
+  EFI_OPEN_PROTOCOL_INFORMATION_ENTRY *Info = NULL;
+  EFI_HANDLE Owner = NULL;
+  EFI_HANDLE Drivers[2];
+  EFI_STATUS Status, ConnectStatus;
+  UINTN Count = 0, Index;
+
+  if (Fs == NULL || Controller == NULL) return EFI_INVALID_PARAMETER;
+  *Fs = NULL;
+  Status = gBS->HandleProtocol (Controller, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Current);
+  if (!EFI_ERROR (Status) && Current != NULL && Current->OpenVolume == Ext4OpenVolume) {
+    *Fs = Current;
+    return EFI_SUCCESS;
+  }
+  if (EFI_ERROR (Status) && Status != EFI_NOT_FOUND && Status != EFI_UNSUPPORTED) return Status;
+  if (!EFI_ERROR (Status) && Current == NULL) return EFI_DEVICE_ERROR;
+  if (gExt4BindingProtocol.DriverBindingHandle == NULL) return EFI_NOT_READY;
+
+  if (Current != NULL) {
+    Status = gBS->OpenProtocolInformation (Controller, &gEfiDiskIoProtocolGuid, &Info, &Count);
+    if (EFI_ERROR (Status)) return Status;
+    for (Index = 0; Index < Count; ++Index) {
+      if (!(Info[Index].Attributes & EFI_OPEN_PROTOCOL_BY_DRIVER) ||
+          Info[Index].ControllerHandle != Controller) continue;
+      if (Owner != NULL && Owner != Info[Index].AgentHandle) {
+        FreePool (Info);
+        return EFI_ACCESS_DENIED;
+      }
+      Owner = Info[Index].AgentHandle;
+    }
+    if (Info != NULL) FreePool (Info);
+    if (Owner == NULL || Owner == gExt4BindingProtocol.DriverBindingHandle)
+      return EFI_ACCESS_DENIED;
+    Status = gBS->DisconnectController (Controller, Owner, NULL);
+    if (EFI_ERROR (Status)) return Status;
+    Current = NULL;
+    Status = gBS->HandleProtocol (Controller, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Current);
+    if (!EFI_ERROR (Status)) return EFI_ACCESS_DENIED;
+    if (Status != EFI_NOT_FOUND && Status != EFI_UNSUPPORTED) return Status;
+  }
+
+  Drivers[0] = gExt4BindingProtocol.DriverBindingHandle;
+  Drivers[1] = NULL;
+  ConnectStatus = gBS->ConnectController (Controller, Drivers, NULL, FALSE);
+  Current = NULL;
+  Status = gBS->HandleProtocol (Controller, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Current);
+  if (!EFI_ERROR (Status) && Current != NULL && Current->OpenVolume == Ext4OpenVolume) {
+    *Fs = Current;
+    return EFI_SUCCESS;
+  }
+  if (EFI_ERROR (ConnectStatus)) return ConnectStatus;
+  return EFI_ERROR (Status) ? Status : EFI_UNSUPPORTED;
+}
+
+EFI_STATUS
+Ext4ReleaseImageFileSystem (EFI_HANDLE Controller)
+{
+  EFI_STATUS Status;
+  if (Controller == NULL) return EFI_INVALID_PARAMETER;
+  if (gExt4BindingProtocol.DriverBindingHandle == NULL) return EFI_SUCCESS;
+  Status = gBS->DisconnectController (
+                  Controller, gExt4BindingProtocol.DriverBindingHandle, NULL);
+  /* NOT_FOUND means this driver is not bound; do not compensate by tearing
+   * down another provider or the lower disk stack. */
+  return Status == EFI_NOT_FOUND ? EFI_SUCCESS : Status;
+}
 
 EFI_STATUS
 EFIAPI

@@ -78,6 +78,8 @@
 	SuperFbBrowser.c
 	SuperFbAdvanced.h
 	SuperFbAdvanced.c
+	SuperFbImageDisk.h
+	SuperFbImageDisk.c
 	SuperFbSynthDisk.h
 	SuperFbSynthDisk.c
 	SuperFbUsbMsd.h
@@ -91,6 +93,7 @@
 	MdeModulePkg/MdeModulePkg.dec
 	QcomModulePkg/QcomModulePkg.dec
 	FatPkg/FatPkg.dec
+	Ext4Pkg/Ext4Pkg.dec
 
 [LibraryClasses]
 	DxeServicesTableLib

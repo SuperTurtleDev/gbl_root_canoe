@@ -15,3 +15,6 @@
   PACKAGE_NAME                   = Ext4Pkg
   PACKAGE_GUID                   = 6B4BF998-668B-46D3-BCFA-971F99F8708C
   PACKAGE_VERSION                = 0.1
+
+[Includes]
+  Include
