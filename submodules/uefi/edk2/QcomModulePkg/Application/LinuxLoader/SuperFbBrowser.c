@@ -403,8 +403,10 @@ SfbEfiActionMenu (IN EFI_HANDLE   Volume,
 
 /* ---- directory navigation ----------------------------------------------- */
 
-/* Returns TRUE when the browser should unwind back to the boot menu. */
-STATIC
+/*
+ * Returns TRUE when the browser should unwind back to the boot menu. Public:
+ * the Advanced volume browser opens individual volumes through it.
+ */
 BOOLEAN
 SfbBrowseVolume (IN EFI_HANDLE   Volume,
                  IN CONST CHAR16 *VolumeLabel,

@@ -370,6 +370,15 @@ VOID
 SfbRunFileBrowser (VOID);
 
 /*
+ * Browse one volume from an absolute path on it; VolumeLabel names the screen.
+ * Returns TRUE when the caller should unwind back to the boot menu.
+ */
+BOOLEAN
+SfbBrowseVolume (IN EFI_HANDLE   Volume,
+                 IN CONST CHAR16 *VolumeLabel,
+                 IN CONST CHAR16 *BrowseRoot);
+
+/*
  * Clear the console and announce fastboot. Called on the way out of the menu so
  * the last thing the menu drew does not stay on screen while fastboot waits for
  * a host that may take a while to show up.

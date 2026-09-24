@@ -662,6 +662,362 @@ SfbAdvExportVirtualFlow (VOID)
   }
 }
 
+/* ---- grouped volume browser (Advanced > Volumes) -------------------------- */
+
+/* The container image-disk device-path node GUID, mirrored from SuperFbFat.c
+ * to classify any container volume - ours or one published by another BDS
+ * copy - as a virtual disk. */
+STATIC CONST EFI_GUID mSfbAdvContainerNodeGuid = {
+  0xf1086281, 0xc184, 0x47f7, { 0xbb, 0xae, 0x30, 0x61, 0x1f, 0x90, 0xe2, 0xa4 }
+};
+
+/* TRUE when the handle's device path carries the container vendor node. */
+STATIC
+BOOLEAN
+SfbAdvIsVirtualVolume (IN EFI_HANDLE Volume)
+{
+  EFI_DEVICE_PATH_PROTOCOL  *Dp;
+  EFI_DEVICE_PATH_PROTOCOL  *Node;
+
+  Dp = DevicePathFromHandle (Volume);
+  if (Dp == NULL) {
+    return FALSE;
+  }
+  for (Node = Dp; !IsDevicePathEnd (Node); Node = NextDevicePathNode (Node)) {
+    if (Node->Type == MEDIA_DEVICE_PATH && Node->SubType == MEDIA_VENDOR_DP &&
+        (DevicePathNodeLength (Node) >= sizeof (VENDOR_DEVICE_PATH)) &&
+        CompareGuid (&((VENDOR_DEVICE_PATH *)Node)->Guid,
+                     &mSfbAdvContainerNodeGuid)) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/*
+ * The whole-disk handle behind a volume: truncate the volume's device path
+ * before its final node and locate the BlockIo handle of what remains.
+ */
+STATIC
+EFI_HANDLE
+SfbAdvParentDiskHandle (IN EFI_HANDLE Volume)
+{
+  EFI_STATUS               Status;
+  EFI_DEVICE_PATH_PROTOCOL *Dp = NULL;
+  EFI_DEVICE_PATH_PROTOCOL *Node;
+  EFI_DEVICE_PATH_PROTOCOL *Last = NULL;
+  EFI_DEVICE_PATH_PROTOCOL *Trunc;
+  EFI_DEVICE_PATH_PROTOCOL *Remaining;
+  EFI_HANDLE               Parent = NULL;
+  EFI_BLOCK_IO_PROTOCOL    *BlkIo = NULL;
+  UINTN                    Len;
+
+  Status = gBS->HandleProtocol (Volume, &gEfiDevicePathProtocolGuid,
+                                (VOID **)&Dp);
+  if (EFI_ERROR (Status) || Dp == NULL) {
+    return NULL;
+  }
+  Node = Dp;
+  while (!IsDevicePathEnd (Node)) {
+    Last = Node;
+    Node = NextDevicePathNode (Node);
+  }
+  if (Last == NULL || Last == Dp) {
+    return NULL;
+  }
+
+  Len = (UINTN)((UINT8 *)Last - (UINT8 *)Dp);
+  Trunc = AllocatePool (Len + sizeof (EFI_DEVICE_PATH_PROTOCOL));
+  if (Trunc == NULL) {
+    return NULL;
+  }
+  CopyMem (Trunc, Dp, Len);
+  SetDevicePathEndNode ((UINT8 *)Trunc + Len);
+
+  Remaining = Trunc;
+  Status = gBS->LocateDevicePath (&gEfiBlockIoProtocolGuid, &Remaining, &Parent);
+  FreePool (Trunc);
+  if (EFI_ERROR (Status) || Parent == NULL) {
+    return NULL;
+  }
+  if (EFI_ERROR (gBS->HandleProtocol (Parent, &gEfiBlockIoProtocolGuid,
+                                      (VOID **)&BlkIo)) ||
+      BlkIo == NULL || BlkIo->Media == NULL ||
+      BlkIo->Media->LogicalPartition) {
+    return NULL;
+  }
+  return Parent;
+}
+
+/* UFS LUN number of a whole-disk handle, or -1 when it is not a UFS LUN. */
+STATIC
+INTN
+SfbAdvLunOfDisk (IN EFI_HANDLE Disk)
+{
+  UINT32  Lun;
+  UINT32  MaxLuns = GetMaxLuns ();
+  UINTN   j;
+
+  for (Lun = 0; Lun < MaxLuns && Lun < MAX_LUNS; Lun++) {
+    for (j = 0; j < Ptable[Lun].MaxHandles; j++) {
+      if (Ptable[Lun].HandleInfoList[j].Handle == NULL) {
+        continue;
+      }
+      if (SfbAdvParentDiskHandle (Ptable[Lun].HandleInfoList[j].Handle) == Disk) {
+        return (INTN)Lun;
+      }
+    }
+  }
+  return -1;
+}
+
+#define SFB_ADV_GROUPS_MAX  16
+#define SFB_ADV_VROWS_MAX   48
+
+typedef struct {
+  BOOLEAN    IsHeader;
+  EFI_HANDLE Volume;
+  CHAR16     Text[SFB_ADV_ROW_CHARS];
+} SFB_ADV_VROW;
+
+/* Volume label of one SFS handle, or an empty string. */
+STATIC
+VOID
+SfbAdvVolumeLabel (IN EFI_HANDLE Volume, OUT CHAR16 *Label, IN UINTN LabelChars)
+{
+  EFI_FILE_PROTOCOL  *Root = NULL;
+
+  Label[0] = L'\0';
+  if (!EFI_ERROR (SfbOpenVolumeRoot (Volume, &Root)) && Root != NULL) {
+    SfbGetVolumeLabel (Root, Label, LabelChars);
+    Root->Close (Root);
+  }
+}
+
+/*
+ * The grouped volume browser: one header per storage group - "LUN x" for each
+ * UFS LUN, the volume label for other disks such as USB sticks - followed by
+ * that group's file systems, then a "Virtual Disks" group holding every
+ * container volume. Selecting a volume browses it from its root through the
+ * ordinary file browser.
+ */
+STATIC
+VOID
+SfbRunVolumesMenu (VOID)
+{
+  EFI_STATUS   Status;
+  EFI_HANDLE   *All = NULL;
+  UINTN        Count = 0;
+  UINTN        Index;
+  EFI_HANDLE   Groups[SFB_ADV_GROUPS_MAX];
+  INTN         GroupLun[SFB_ADV_GROUPS_MAX];
+  UINTN        GroupCount = 0;
+  UINTN        GroupIdx;
+  UINTN        Move;
+  SFB_ADV_VROW *Rows = NULL;
+  UINTN        RowCount = 0;
+  UINTN        Selectable[SFB_ADV_VROWS_MAX];
+  UINTN        SelectCount = 0;
+  UINTN        Cursor = 0;
+  SFB_KEY      Key;
+  BOOLEAN      HaveVirtual = FALSE;
+
+  SfbShowEnteringScreen (L"Volumes");
+
+  while (TRUE) {
+    Status = gBS->LocateHandleBuffer (ByProtocol,
+                                      &gEfiSimpleFileSystemProtocolGuid,
+                                      NULL, &Count, &All);
+    if (EFI_ERROR (Status) || All == NULL || Count == 0) {
+      SfbReportStatus (L"No file system volumes found",
+                       EFI_ERROR (Status) ? Status : EFI_NOT_FOUND);
+      if (All != NULL) {
+        FreePool (All);
+      }
+      return;
+    }
+
+    Rows = AllocateZeroPool ((Count + SFB_ADV_GROUPS_MAX + 2) * sizeof (*Rows));
+    if (Rows == NULL) {
+      FreePool (All);
+      return;
+    }
+    RowCount = 0;
+    GroupCount = 0;
+    HaveVirtual = FALSE;
+
+    /* Discover the physical groups, UFS LUNs in ascending order. */
+    for (Index = 0; Index < Count; Index++) {
+      EFI_HANDLE  Parent;
+      INTN        Lun;
+
+      if (SfbAdvIsVirtualVolume (All[Index])) {
+        HaveVirtual = TRUE;
+        continue;
+      }
+      Parent = SfbAdvParentDiskHandle (All[Index]);
+      if (Parent == NULL) {
+        continue;
+      }
+      Lun = SfbAdvLunOfDisk (Parent);
+
+      for (GroupIdx = 0; GroupIdx < GroupCount; GroupIdx++) {
+        if (Groups[GroupIdx] == Parent) {
+          break;
+        }
+      }
+      if (GroupIdx < GroupCount || GroupCount >= SFB_ADV_GROUPS_MAX) {
+        continue;
+      }
+      if (Lun >= 0) {
+        for (GroupIdx = 0; GroupIdx < GroupCount; GroupIdx++) {
+          if (GroupLun[GroupIdx] >= 0 && GroupLun[GroupIdx] > Lun) {
+            break;
+          }
+        }
+        for (Move = GroupCount; Move > GroupIdx; Move--) {
+          Groups[Move] = Groups[Move - 1];
+          GroupLun[Move] = GroupLun[Move - 1];
+        }
+      } else {
+        GroupIdx = GroupCount;
+      }
+      Groups[GroupIdx] = Parent;
+      GroupLun[GroupIdx] = Lun;
+      GroupCount++;
+    }
+
+    /* Emit each group: header, then its volumes. */
+    for (GroupIdx = 0; GroupIdx < GroupCount && RowCount < SFB_ADV_VROWS_MAX;
+         GroupIdx++) {
+      CHAR16  First[SFB_DESC_CHARS];
+
+      First[0] = L'\0';
+      for (Index = 0; Index < Count && RowCount < SFB_ADV_VROWS_MAX; Index++) {
+        CHAR16  Label[SFB_DESC_CHARS];
+
+        if (SfbAdvIsVirtualVolume (All[Index]) ||
+            SfbAdvParentDiskHandle (All[Index]) != Groups[GroupIdx]) {
+          continue;
+        }
+        SfbAdvVolumeLabel (All[Index], Label, SFB_DESC_CHARS);
+        if (First[0] == L'\0' && Label[0] != L'\0') {
+          StrnCpyS (First, SFB_DESC_CHARS, Label, SFB_DESC_CHARS - 1);
+        }
+        Rows[RowCount].IsHeader = FALSE;
+        Rows[RowCount].Volume = All[Index];
+        StrnCpyS (Rows[RowCount].Text, SFB_ADV_ROW_CHARS,
+                  (Label[0] != L'\0') ? Label : L"Volume",
+                  SFB_ADV_ROW_CHARS - 1);
+        RowCount++;
+      }
+
+      Rows[RowCount].IsHeader = TRUE;
+      Rows[RowCount].Volume = NULL;
+      if (GroupLun[GroupIdx] >= 0) {
+        UnicodeSPrint (Rows[RowCount].Text, sizeof (Rows[RowCount].Text),
+                       L"LUN %d", (INT32)GroupLun[GroupIdx]);
+      } else {
+        UnicodeSPrint (Rows[RowCount].Text, sizeof (Rows[RowCount].Text),
+                       L"Disk %s", First);
+      }
+      RowCount++;
+    }
+
+    /* Virtual Disks group, last. */
+    if (HaveVirtual && RowCount < SFB_ADV_VROWS_MAX) {
+      Rows[RowCount].IsHeader = TRUE;
+      Rows[RowCount].Volume = NULL;
+      StrCpyS (Rows[RowCount].Text, SFB_ADV_ROW_CHARS, L"Virtual Disks");
+      RowCount++;
+
+      for (Index = 0; Index < Count && RowCount < SFB_ADV_VROWS_MAX; Index++) {
+        CHAR16  Label[SFB_DESC_CHARS];
+
+        if (!SfbAdvIsVirtualVolume (All[Index])) {
+          continue;
+        }
+        SfbAdvVolumeLabel (All[Index], Label, SFB_DESC_CHARS);
+        Rows[RowCount].IsHeader = FALSE;
+        Rows[RowCount].Volume = All[Index];
+        StrnCpyS (Rows[RowCount].Text, SFB_ADV_ROW_CHARS,
+                  (Label[0] != L'\0') ? Label : L"container",
+                  SFB_ADV_ROW_CHARS - 1);
+        RowCount++;
+      }
+    }
+
+    FreePool (All);
+    All = NULL;
+
+    /* Back row. */
+    Rows[RowCount].IsHeader = FALSE;
+    Rows[RowCount].Volume = NULL;
+    StrCpyS (Rows[RowCount].Text, SFB_ADV_ROW_CHARS, L"Back");
+    RowCount++;
+    Cursor = 0;
+
+    while (TRUE) {
+      UINTN  Start;
+      UINTN  Last;
+      UINTN  Drawn;
+      UINTN  Row;
+
+      SelectCount = 0;
+      for (Index = 0; Index < RowCount && SelectCount < SFB_ADV_VROWS_MAX;
+           Index++) {
+        if (!Rows[Index].IsHeader) {
+          Selectable[SelectCount++] = Index;
+        }
+      }
+      if (Cursor >= SelectCount) {
+        Cursor = 0;
+      }
+
+      SfbBeginScreen (L"Volumes", L"Browse a volume from its root.");
+
+      Start = SfbWindowStart (Cursor, SelectCount, SFB_VISIBLE_ROWS);
+      Last = Start + SFB_VISIBLE_ROWS;
+      if (Last > SelectCount) {
+        Last = SelectCount;
+      }
+      for (Drawn = Start; Drawn < Last; Drawn++) {
+        Row = Selectable[Drawn];
+        SfbDrawRow ((BOOLEAN)(Drawn == Cursor),
+                    (Rows[Row].Volume == NULL) ? L" " : L"[V]",
+                    Rows[Row].Text);
+      }
+      if (Last < SelectCount) {
+        Print (L"    ... %u more\r\n", (UINT32)(SelectCount - Last));
+      }
+      SfbEndScreen (L"Vol Up/Down: move   Power: select");
+
+      Key = SfbWaitForKey (0);
+      if (Key == SfbKeyUp || Key == SfbKeyDown) {
+        SfbMoveCursor (&Cursor, SelectCount, Key);
+        continue;
+      }
+
+      Row = Selectable[Cursor];
+      if (Rows[Row].Volume == NULL) {
+        SfbDebounceMenuExit ();
+        FreePool (Rows);
+        return;
+      }
+      if (SfbBrowseVolume (Rows[Row].Volume, Rows[Row].Text, L"\\")) {
+        SfbDebounceMenuExit ();
+        FreePool (Rows);
+        return;
+      }
+      /* Media may have changed while browsing; rebuild the groups. */
+      break;
+    }
+
+    FreePool (Rows);
+    Rows = NULL;
+  }
+}
+
 STATIC
 VOID
 SfbRunMassStorageMenu (VOID)
@@ -695,18 +1051,23 @@ SfbRunMassStorageMenu (VOID)
 VOID
 SfbRunAdvancedMenu (VOID)
 {
-  STATIC CONST CHAR16 Rows[1][SFB_ADV_ROW_CHARS] = {
-    L"USB Mass Storage >"
+  STATIC CONST CHAR16 Rows[2][SFB_ADV_ROW_CHARS] = {
+    L"USB Mass Storage >",
+    L"Volumes >"
   };
   INTN Chosen;
 
   SfbShowEnteringScreen (L"Advanced");
 
   while (TRUE) {
-    Chosen = SfbAdvChoose (L"Advanced", NULL, Rows, 1, 0);
+    Chosen = SfbAdvChoose (L"Advanced", NULL, Rows, 2, 0);
     if (Chosen < 0) {
       return;
     }
-    SfbRunMassStorageMenu ();
+    if (Chosen == 0) {
+      SfbRunMassStorageMenu ();
+    } else {
+      SfbRunVolumesMenu ();
+    }
   }
 }
