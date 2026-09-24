@@ -79,9 +79,8 @@ typedef enum {
    * submenu. Volume/Path name the ENTRIES file; Desc is the submenu title. */
   SfbEntrySubmenu,
   /* Built-in entries; no backing file, handled in code. */
-  SfbEntryFastboot,
-  SfbEntrySelector,
-  /* Opens the Advanced submenu (USB mass-storage export and friends). */
+  /* Opens the Advanced submenu (fastboot, USB mass-storage export, grouped
+   * volumes). */
   SfbEntryAdvanced,
   /* "Back" row at the foot of a submenu: returns to the parent menu. */
   SfbEntryBack,

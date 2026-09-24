@@ -865,8 +865,6 @@ SfbBuildMenu (OUT SFB_MENU_STATE *Menu)
   SfbScanVolumes (Menu);
   SfbAppendCustomEntry (Menu);
 
-  SfbAppendBuiltIn (Menu, SfbEntryFastboot, L"Enter Fastboot");
-  SfbAppendBuiltIn (Menu, SfbEntrySelector, L"Enter EFI Program Selector");
   SfbAppendBuiltIn (Menu, SfbEntryAdvanced, L"Advanced");
   SfbAppendBuiltIn (Menu, SfbEntryPowerOff, L"Power Off");
   SfbAppendBuiltIn (Menu, SfbEntryRestart, L"Restart");

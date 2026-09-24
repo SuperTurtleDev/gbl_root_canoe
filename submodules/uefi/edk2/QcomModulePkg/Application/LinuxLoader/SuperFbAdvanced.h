@@ -12,16 +12,20 @@
  * Run the Advanced submenu:
  *
  *   Advanced
- *    `- USB Mass Storage
- *        |- Export a partition   -> LUN picker -> partition picker -> mode
- *        `- Export a LUN         -> LUN picker -> mode
+ *    |- Enter Fastboot
+ *    |- USB Mass Storage
+ *    |   |- Export a partition   -> LUN picker -> partition picker -> mode
+ *    |   |- Export a LUN         -> LUN picker -> mode
+ *    |   `- Export a Virtual Disk
+ *    `- Volumes                  -> LUN / Disk / Virtual Disks -> volume
  *
  * "mode" is the Read only / Read Write chooser shown before every export.
  * Partitions are exported behind a RAM-backed fake GPT (always write
  * protected); a whole LUN is exported one-to-one, optionally forced
- * read-only. Returns when the user backs out.
+ * read-only. Returns TRUE when the user picked "Enter Fastboot" so the boot
+ * menu hands control to the fastboot loop; FALSE on back-out.
  */
-VOID
+BOOLEAN
 SfbRunAdvancedMenu (VOID);
 
 #endif /* __SUPER_FB_ADVANCED_H__ */

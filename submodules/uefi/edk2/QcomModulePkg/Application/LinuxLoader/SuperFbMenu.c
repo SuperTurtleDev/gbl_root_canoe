@@ -485,18 +485,13 @@ SfbRunBootMenu (VOID)
     }
 
     switch (Menu.Entry[Chosen].Kind) {
-    case SfbEntryFastboot:
-      SfbFreeMenu (&Menu);
-      return TRUE;
-
-    case SfbEntrySelector:
-      SfbRunFileBrowser ();
-      /* The browser may have added a custom entry. */
-      Rebuild = TRUE;
-      break;
-
     case SfbEntryAdvanced:
-      SfbRunAdvancedMenu ();
+      /* Advanced owns fastboot now: a TRUE return means the user picked
+       * "Enter Fastboot" there and the caller should hand over to it. */
+      if (SfbRunAdvancedMenu ()) {
+        SfbFreeMenu (&Menu);
+        return TRUE;
+      }
       /* Storage and media state changed inside the submenu. */
       Rebuild = TRUE;
       break;
