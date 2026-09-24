@@ -505,15 +505,166 @@ SfbAdvExportLunFlow (VOID)
   }
 }
 
-/* ---- menus ---------------------------------------------------------------- */
+/* ---- virtual disk (efisp.fat) export -------------------------------------- */
+
+/*
+ * Label the blob mounted from SourceVolume as virtual(LUNx:name:idx): the LUN,
+ * the GPT name and the GPT entry number of the mother partition carrying the
+ * efisp.fat file, so the row names where the image lives.
+ */
+STATIC
+VOID
+SfbAdvVirtualLabel (IN EFI_HANDLE Source, OUT CHAR16 *Out, IN UINTN OutChars)
+{
+  EFI_PARTITION_ENTRY  *Entry = NULL;
+  UINT32               Lun;
+  UINT32               MaxLuns = GetMaxLuns ();
+  UINTN                j;
+
+  for (Lun = 0; Lun < MaxLuns && Lun < MAX_LUNS; Lun++) {
+    for (j = 0; j < Ptable[Lun].MaxHandles; j++) {
+      if (Ptable[Lun].HandleInfoList[j].Handle != Source) {
+        continue;
+      }
+      if (EFI_ERROR (gBS->HandleProtocol (Ptable[Lun].HandleInfoList[j].Handle,
+                                          &gEfiPartitionRecordGuid,
+                                          (VOID **)&Entry)) || Entry == NULL) {
+        break;
+      }
+      UnicodeSPrint (Out, OutChars, L"virtual(LUN%u:%s:%u)",
+                     Lun, Entry->PartitionName, (UINT32)(j + 1));
+      return;
+    }
+  }
+  StrCpyS (Out, OutChars, L"virtual(efisp.fat)");
+}
+
+/*
+ * Export an auto-mounted efisp.fat container to the host. The published FAT
+ * view is withdrawn first (disconnect, flush, uninstall) so the host owns the
+ * disk exclusively - mirroring the 7.x container's export order - and
+ * republished when the session ends. Read-only exports go through the
+ * pass-through wrapper so a host write is swallowed instead of reaching a
+ * vendor driver error path.
+ */
+STATIC
+VOID
+SfbAdvExportVirtualFlow (VOID)
+{
+  CHAR16              (*Rows)[SFB_ADV_ROW_CHARS];
+  UINTN               Slots[24];
+  UINTN               Count;
+  UINTN               Shown;
+  INTN                Chosen;
+  UINTN               Blob;
+  EFI_STATUS          Status;
+  BOOLEAN             ReadOnly = TRUE;
+  CHAR16              Target[64];
+  CHAR16              Detail[96];
+  SFB_SYNTH_DISK      *Wrap = NULL;
+  EFI_BLOCK_IO_PROTOCOL *BlkIo;
+  UINT64              Bytes;
+
+  SfbShowEnteringScreen (L"Export a Virtual Disk");
+
+  while (TRUE) {
+    Count = SfbFatBlobCount ();
+    if (Count == 0) {
+      SfbReportStatus (L"No efisp.fat is mounted", EFI_NOT_FOUND);
+      return;
+    }
+
+    Rows = AllocateZeroPool (Count * sizeof (*Rows));
+    if (Rows == NULL) {
+      return;
+    }
+
+    Shown = 0;
+    for (Blob = 0; Blob < Count && Shown < 24; Blob++) {
+      if (SfbFatBlobDisk (Blob) == NULL) {
+        /* Withdrawn for an export already; leave it out of the list. */
+        continue;
+      }
+      SfbAdvVirtualLabel (SfbFatBlobSource (Blob), Rows[Shown],
+                          SFB_ADV_ROW_CHARS);
+      Slots[Shown] = Blob;
+      Shown++;
+    }
+
+    if (Shown == 0) {
+      FreePool (Rows);
+      SfbReportStatus (L"No efisp.fat is mounted", EFI_NOT_FOUND);
+      return;
+    }
+
+    Chosen = SfbAdvChoose (L"Export a Virtual Disk",
+                           L"Pick the mounted container to export.",
+                           Rows, Shown, 0);
+    FreePool (Rows);
+    if (Chosen < 0) {
+      return;
+    }
+    Blob = Slots[Chosen];
+
+    SfbAdvVirtualLabel (SfbFatBlobSource (Blob), Target, ARRAY_SIZE (Target));
+    if (!SfbAdvChooseMountMode (Target, &ReadOnly)) {
+      continue;
+    }
+
+    Status = SfbFatBlobWithdraw (Blob);
+    if (EFI_ERROR (Status)) {
+      SfbReportStatus (L"Could not withdraw the container", Status);
+      (VOID)SfbFatBlobRestore (Blob);
+      continue;
+    }
+
+    BlkIo = SfbFatBlobImageDisk (Blob);
+    if (BlkIo == NULL) {
+      SfbReportStatus (L"Container unavailable", EFI_NOT_FOUND);
+      (VOID)SfbFatBlobRestore (Blob);
+      continue;
+    }
+
+    if (ReadOnly) {
+      Status = SfbPassDiskCreate (BlkIo, TRUE, &Wrap);
+      if (EFI_ERROR (Status)) {
+        SfbReportStatus (L"Could not wrap container", Status);
+        (VOID)SfbFatBlobRestore (Blob);
+        continue;
+      }
+      Bytes = (Wrap->Media.LastBlock + 1) * (UINT64)Wrap->Media.BlockSize;
+      BlkIo = &Wrap->BlockIo;
+    } else {
+      Bytes = (BlkIo->Media->LastBlock + 1) *
+              (UINT64)BlkIo->Media->BlockSize;
+    }
+
+    UnicodeSPrint (Detail, sizeof (Detail), L"%s (%a)", Target,
+                   ReadOnly ? "read-only" : "read-write");
+    Status = SfbUsbMsdExportBlkIo (BlkIo, L"USB Mass Storage", Detail, Bytes);
+
+    if (Wrap != NULL) {
+      SfbSynthDiskDestroy (Wrap);
+      Wrap = NULL;
+    }
+    (VOID)SfbFatBlobRestore (Blob);
+
+    if (EFI_ERROR (Status) && Status != EFI_ABORTED &&
+        Status != EFI_MEDIA_CHANGED) {
+      SfbReportStatus (L"Could not start mass storage", Status);
+    }
+    /* Loop: the container list is re-resolved after the session. */
+  }
+}
 
 STATIC
 VOID
 SfbRunMassStorageMenu (VOID)
 {
-  STATIC CONST CHAR16 Rows[2][SFB_ADV_ROW_CHARS] = {
+  STATIC CONST CHAR16 Rows[3][SFB_ADV_ROW_CHARS] = {
     L"Export a partition >",
-    L"Export a LUN >"
+    L"Export a LUN >",
+    L"Export a Virtual Disk >"
   };
   INTN Chosen;
 
@@ -522,14 +673,16 @@ SfbRunMassStorageMenu (VOID)
   while (TRUE) {
     Chosen = SfbAdvChoose (L"USB Mass Storage",
                            L"Expose device storage to the host over USB.",
-                           Rows, 2, 0);
+                           Rows, 3, 0);
     if (Chosen < 0) {
       return;
     }
     if (Chosen == 0) {
       SfbAdvExportPartitionFlow ();
-    } else {
+    } else if (Chosen == 1) {
       SfbAdvExportLunFlow ();
+    } else {
+      SfbAdvExportVirtualFlow ();
     }
   }
 }

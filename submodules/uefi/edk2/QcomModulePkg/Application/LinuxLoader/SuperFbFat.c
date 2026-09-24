@@ -465,6 +465,66 @@ STATIC SFB_FAT_BLOB_MOUNT  mSfbFatBlobMounts[SFB_FAT_BLOB_MAX_MOUNTS];
 STATIC UINTN               mSfbFatBlobMountCount = 0;
 
 /*
+ * Withdraw the published disk for a raw USB export: disconnect the FAT view,
+ * flush, uninstall the protocols. Map and image disk stay alive so the disk
+ * can be republished when the export session ends. Mirrors the 7.x
+ * container's UsbBegin order.
+ */
+STATIC
+EFI_STATUS
+SfbFatBlobUnpublish (IN OUT SFB_FAT_BLOB_MOUNT *Mount)
+{
+  EFI_STATUS  Status;
+
+  if (Mount->Disk == NULL) {
+    return EFI_SUCCESS;
+  }
+  Status = gBS->DisconnectController (Mount->Disk, NULL, NULL);
+  if (EFI_ERROR (Status) && Status != EFI_NOT_FOUND) {
+    return Status;
+  }
+  if (Mount->ImageDisk.Active && Mount->ImageDisk.Block.FlushBlocks != NULL) {
+    (VOID)Mount->ImageDisk.Block.FlushBlocks (&Mount->ImageDisk.Block);
+  }
+  Status = gBS->UninstallMultipleProtocolInterfaces (
+             Mount->Disk,
+             &gEfiBlockIoProtocolGuid, &Mount->ImageDisk.Block,
+             &gEfiDevicePathProtocolGuid, Mount->Path,
+             NULL);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+  Mount->Disk = NULL;
+  return EFI_SUCCESS;
+}
+
+/* Publish an unpublished mount again and rebind FAT, single handle. */
+STATIC
+EFI_STATUS
+SfbFatBlobRepublish (IN OUT SFB_FAT_BLOB_MOUNT *Mount)
+{
+  EFI_STATUS  Status;
+
+  if (Mount->Disk != NULL) {
+    return EFI_SUCCESS;
+  }
+  if (Mount->Path == NULL || Mount->Map == NULL) {
+    return EFI_NOT_STARTED;
+  }
+  Status = gBS->InstallMultipleProtocolInterfaces (
+             &Mount->Disk,
+             &gEfiBlockIoProtocolGuid, &Mount->ImageDisk.Block,
+             &gEfiDevicePathProtocolGuid, Mount->Path,
+             NULL);
+  if (EFI_ERROR (Status)) {
+    Mount->Disk = NULL;
+    return Status;
+  }
+  (VOID)gBS->ConnectController (Mount->Disk, NULL, NULL, TRUE);
+  return EFI_SUCCESS;
+}
+
+/*
  * Tear one mount down, mirroring the 7.x container unmount order: disconnect
  * the FAT stack, flush, withdraw the protocols, free the map, then invalidate
  * the ext4 driver's cached view of the file.
@@ -475,21 +535,7 @@ SfbFatBlobUnmount (IN OUT SFB_FAT_BLOB_MOUNT *Mount)
 {
   EFI_STATUS  Status;
 
-  if (Mount->Disk != NULL) {
-    Status = gBS->DisconnectController (Mount->Disk, NULL, NULL);
-    if (EFI_ERROR (Status) && Status != EFI_NOT_FOUND) {
-      DEBUG ((EFI_D_ERROR, "SFB: blob disconnect: %r\n", Status));
-    }
-    if (Mount->ImageDisk.Active && Mount->ImageDisk.Block.FlushBlocks != NULL) {
-      (VOID)Mount->ImageDisk.Block.FlushBlocks (&Mount->ImageDisk.Block);
-    }
-    (VOID)gBS->UninstallMultipleProtocolInterfaces (
-                 Mount->Disk,
-                 &gEfiBlockIoProtocolGuid, &Mount->ImageDisk.Block,
-                 &gEfiDevicePathProtocolGuid, Mount->Path,
-                 NULL);
-    Mount->Disk = NULL;
-  }
+  (VOID)SfbFatBlobUnpublish (Mount);
   if (Mount->Map != NULL) {
     SfbImageDiskDestroy (&Mount->ImageDisk);
     FreePool (Mount->Map);
@@ -678,6 +724,70 @@ SfbMountEfispFatVolumes (VOID)
   }
 
   FreePool (All);
+}
+
+/* ---- efisp.fat blob mounts: export-facing API ---------------------------- */
+
+UINTN
+SfbFatBlobCount (VOID)
+{
+  return mSfbFatBlobMountCount;
+}
+
+/* The ext4 volume handle the blob at Index was mounted from. */
+EFI_HANDLE
+SfbFatBlobSource (IN UINTN Index)
+{
+  if (Index >= mSfbFatBlobMountCount) {
+    return NULL;
+  }
+  return mSfbFatBlobMounts[Index].Source;
+}
+
+/*
+ * The published image disk at Index, or NULL while it is withdrawn for a raw
+ * USB export. The BlockIo stays owned by the mount.
+ */
+EFI_BLOCK_IO_PROTOCOL *
+SfbFatBlobDisk (IN UINTN Index)
+{
+  if (Index >= mSfbFatBlobMountCount || mSfbFatBlobMounts[Index].Disk == NULL) {
+    return NULL;
+  }
+  return &mSfbFatBlobMounts[Index].ImageDisk.Block;
+}
+
+/*
+ * The image disk at Index regardless of publish state; the caller owns
+ * nothing and must not use it while the disk is published to FAT.
+ */
+EFI_BLOCK_IO_PROTOCOL *
+SfbFatBlobImageDisk (IN UINTN Index)
+{
+  if (Index >= mSfbFatBlobMountCount) {
+    return NULL;
+  }
+  return &mSfbFatBlobMounts[Index].ImageDisk.Block;
+}
+
+/* Withdraw the disk for an exclusive export session. */
+EFI_STATUS
+SfbFatBlobWithdraw (IN UINTN Index)
+{
+  if (Index >= mSfbFatBlobMountCount) {
+    return EFI_INVALID_PARAMETER;
+  }
+  return SfbFatBlobUnpublish (&mSfbFatBlobMounts[Index]);
+}
+
+/* Publish a withdrawn disk again and rebind FAT. */
+EFI_STATUS
+SfbFatBlobRestore (IN UINTN Index)
+{
+  if (Index >= mSfbFatBlobMountCount) {
+    return EFI_INVALID_PARAMETER;
+  }
+  return SfbFatBlobRepublish (&mSfbFatBlobMounts[Index]);
 }
 
 EFI_STATUS

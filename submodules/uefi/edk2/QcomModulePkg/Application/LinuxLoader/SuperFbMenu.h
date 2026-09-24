@@ -13,6 +13,7 @@
 #define __SUPER_FB_MENU_H__
 
 #include <Uefi.h>
+#include <Protocol/BlockIo.h>
 #include <Protocol/DevicePath.h>
 #include <Protocol/SimpleFileSystem.h>
 
@@ -224,6 +225,33 @@ VOID
 SfbGetVolumeLabel (IN EFI_FILE_PROTOCOL *Root,
                    OUT CHAR16           *Out,
                    IN UINTN             OutChars);
+
+/* ---- efisp.fat blob mounts (SuperFbFat.c) -------------------------------- */
+
+/* Number of efisp.fat blobs mounted so far this boot. */
+UINTN
+SfbFatBlobCount (VOID);
+
+/* The ext4 volume handle the blob at Index was mounted from. */
+EFI_HANDLE
+SfbFatBlobSource (IN UINTN Index);
+
+/*
+ * The published image disk at Index, or NULL while it is withdrawn for a raw
+ * USB export. The BlockIo stays owned by the mount.
+ */
+EFI_BLOCK_IO_PROTOCOL *
+SfbFatBlobDisk (IN UINTN Index);
+
+/* Withdraw the disk for an exclusive export session; Restore publishes it
+ * again and rebinds FAT when the session ends. ImageDisk returns the block
+ * device regardless of publish state, for the export session itself. */
+EFI_STATUS
+SfbFatBlobWithdraw (IN UINTN Index);
+EFI_STATUS
+SfbFatBlobRestore (IN UINTN Index);
+EFI_BLOCK_IO_PROTOCOL *
+SfbFatBlobImageDisk (IN UINTN Index);
 
 /* ---- SuperFbStore.c: settings kept in the tail of the ESP ---------------- */
 
