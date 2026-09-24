@@ -80,6 +80,8 @@
 	SuperFbAdvanced.c
 	SuperFbImageDisk.h
 	SuperFbImageDisk.c
+	SuperFbRamDisk.h
+	SuperFbRamDisk.c
 	SuperFbSynthDisk.h
 	SuperFbSynthDisk.c
 	SuperFbUsbMsd.h
