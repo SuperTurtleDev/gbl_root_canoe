@@ -102,7 +102,12 @@ SfbAdvChoose (IN CONST CHAR16 *Title,
       SfbMoveCursor (&Cursor, Total, Key);
       continue;
     }
-    return (Cursor < Count) ? (INTN)Cursor : -1;
+    if (Cursor < Count) {
+      return (INTN)Cursor;
+    }
+    /* Back: debounce the confirming key before the parent redraws. */
+    SfbDebounceMenuExit ();
+    return -1;
   }
 }
 

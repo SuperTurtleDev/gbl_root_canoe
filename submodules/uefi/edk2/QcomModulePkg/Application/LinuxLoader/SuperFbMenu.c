@@ -293,6 +293,18 @@ SfbShowEnteringScreen (IN CONST CHAR16 *What)
   gST->ConIn->Reset (gST->ConIn, FALSE);
 }
 
+/*
+ * Debounce a menu exit: the key that confirmed Back would otherwise leak into
+ * the parent menu (or its trailing repeats would) and act there immediately.
+ * Hold for the entering-screen delay, then drop everything queued.
+ */
+VOID
+SfbDebounceMenuExit (VOID)
+{
+  gBS->Stall (SFB_ENTERING_SCREEN_DELAY_S * 1000 * 1000);
+  gST->ConIn->Reset (gST->ConIn, FALSE);
+}
+
 /* ---- boot menu ---------------------------------------------------------- */
 
 STATIC
@@ -400,6 +412,8 @@ SfbRunSubMenu (IN EFI_HANDLE   Volume,
     Chosen = Cursor;
     switch (Menu->Entry[Chosen].Kind) {
     case SfbEntryBack:
+      /* Returning to the parent: debounce the confirming key first. */
+      SfbDebounceMenuExit ();
       goto done;
 
     case SfbEntrySubmenu:

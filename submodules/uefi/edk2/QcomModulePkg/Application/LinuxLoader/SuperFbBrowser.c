@@ -661,6 +661,7 @@ SfbRunFileBrowser (VOID)
     }
 
     if (Cursor == VolumeCount) {
+      SfbDebounceMenuExit ();
       break;
     }
 

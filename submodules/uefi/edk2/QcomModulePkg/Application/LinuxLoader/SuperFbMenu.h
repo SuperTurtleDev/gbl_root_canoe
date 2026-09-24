@@ -405,6 +405,13 @@ SfbShowBootingScreen (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen);
 VOID
 SfbShowEnteringScreen (IN CONST CHAR16 *What);
 
+/*
+ * Debounce a menu exit (Back): hold briefly and drain the input queue so the
+ * confirming key cannot act on the parent menu.
+ */
+VOID
+SfbDebounceMenuExit (VOID);
+
 /* Wait for a key. TimeoutMs of 0 waits indefinitely. */
 SFB_KEY
 SfbWaitForKey (IN UINT32 TimeoutMs);
