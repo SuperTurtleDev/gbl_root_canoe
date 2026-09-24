@@ -580,6 +580,9 @@ EFI_STATUS FastbootInitialize (VOID)
 
     case FbActionExitMenu:
       FastbootShowActionScreen (L"Returning to Boot Menu...");
+      /* The switch's own break only leaves this case; the flag is what takes
+       * the while (1) below through its ordinary exit path. */
+      mFbExitToMenu = TRUE;
       break;
 
     default:
