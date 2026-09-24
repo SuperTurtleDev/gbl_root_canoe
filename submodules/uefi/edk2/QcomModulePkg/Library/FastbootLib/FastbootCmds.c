@@ -96,7 +96,6 @@ found at
 #include "AutoGen.h"
 #include "FastbootCmds.h"
 #include "FastbootMain.h"
-#include "../../Application/LinuxLoader/SuperFbRamDisk.h"
 #include "LinuxLoaderLib.h"
 #include "MetaFormat.h"
 #include "SparseFormat.h"
@@ -2316,75 +2315,6 @@ CmdExitToMenu (IN CONST CHAR8 *arg, IN VOID *data, IN UINT32 sz)
   FastbootRequestExitToMenu ();
 }
 
-/*
- * fastboot stage <volume path> / oem stage <volume path>: copy an image file
- * from the first volume that carries it into memory and mount the copy as a
- * read-write RAM disk. The mounted volume is classified as a virtual disk, so
- * it appears in the grouped browser and is scanned for boot entries once the
- * operator exits fastboot back to the menu. One image at a time; oem unstage
- * tears it down and frees the memory.
- */
-STATIC VOID
-CmdStage (IN CONST CHAR8 *arg, IN VOID *data, IN UINT32 sz)
-{
-  EFI_STATUS  Status;
-  CHAR16      Path[256];
-  UINTN       Index;
-
-  (VOID)data;
-  (VOID)sz;
-
-  while (*arg == ' ') {
-    arg++;
-  }
-  if (arg == NULL || *arg == '\0') {
-    FastbootFail ("usage: stage <volume path>");
-    return;
-  }
-
-  for (Index = 0; arg[Index] != '\0' && Index + 1 < ARRAY_SIZE (Path);
-       Index++) {
-    Path[Index] = (CHAR16)arg[Index];
-  }
-  Path[Index] = L'\0';
-
-  if (SfbRamAnyStaged ()) {
-    FastbootFail ("a RAM disk is staged; oem unstage first");
-    return;
-  }
-
-  Status = SfbRamStageImage (Path, NULL, 0);
-  if (EFI_ERROR (Status)) {
-    if (Status == EFI_NOT_FOUND) {
-      FastbootFail ("image not found on any volume");
-    } else if (Status == EFI_UNSUPPORTED) {
-      FastbootFail ("image size unsupported (512-byte aligned, <=512MiB)");
-    } else {
-      FastbootFail ("stage failed");
-    }
-    return;
-  }
-
-  FastbootOkay ("staged; exit fastboot to browse or boot it");
-}
-
-STATIC VOID
-CmdUnstage (IN CONST CHAR8 *arg, IN VOID *data, IN UINT32 sz)
-{
-  EFI_STATUS  Status;
-
-  (VOID)arg;
-  (VOID)data;
-  (VOID)sz;
-
-  Status = SfbRamUnstageAll ();
-  if (EFI_ERROR (Status)) {
-    FastbootFail ("unstage failed");
-    return;
-  }
-  FastbootOkay ("");
-}
-
 STATIC VOID UpdateGetVarVariable (VOID)
 {
 }
@@ -2815,10 +2745,6 @@ FastbootCommandSetup (IN VOID *Base, IN UINT64 Size)
       {"reboot", CmdReboot},
       {"exit", CmdExitToMenu},
       {"oem exit", CmdExitToMenu},
-      {"stage:", CmdStage},
-      {"oem stage", CmdStage},
-      {"unstage:", CmdUnstage},
-      {"oem unstage", CmdUnstage},
       {"getvar:", CmdGetVar},
       {"download:", CmdDownload},
   };
