@@ -66,7 +66,9 @@
 3. **Linux 平台：** 开启终端执行 `bash build.sh`。**Windows 平台：** 双击运行 `build.bat`。
 4. 脚本会提取并破解 ABL，输出 `ABL.efi`（假回锁）和 `ABL_original.efi`（原版），`BDS.efi` 已附带。请查看 `patch_log.txt`，若显示 "Warning: Failed to patch ABL GBL"，则该 ABL 没有漏洞，需将 `abl` 分区降级为带有 GBL 漏洞的旧版本 ABL。
 
-随后手动完成安装（完整步骤见 [Wiki](https://github.com/superturtlee/gbl_root_canoe/wiki)）：将 `ABL.efi` 复制到 `/mnt/vendor/persist/efisp/`，创建 `BOOTENTRIES`，`sync`，再将 `BDS.efi` 刷入 `efisp`（`dd if=BDS.efi of=/dev/block/by-name/efisp bs=4M`）。
+小米 / HyperOS 跨区功能需显式启用：Linux 执行 `bash build.sh --hwcountry-global`，Windows 执行 `build.bat --hwcountry-global`，Android 工具包执行 `sh build.sh --hwcountry-global`。此功能移植自 [HyperCanoe](https://github.com/StevenWin818/GBL_Root_HyperCanoe)，将支持的 ABL 中 HwCountry 的 getvar 和显示指针重定向为 `GLOBAL`；默认不修改硬件地区。布局不支持、引用不唯一或没有可用的 PE 段尾填充时会失败，不生成修补文件。也可直接执行 `patch_abl ABL_original.efi boot.efi --hwcountry-global`；模块的自动安装流程不启用此选项。
+
+随后手动完成安装（完整步骤见 [Wiki](https://github.com/superturtlee/gbl_root_canoe/wiki)）：将生成的 `efisp/boot.efi` 复制到 `/mnt/vendor/persist/efisp/`，使用工具包的 `BOOTENTRIES`，`sync`，再将 `BDS.efi` 刷入 `efisp`（`dd if=BDS.efi of=/dev/block/by-name/efisp bs=4M`）。`boot.efi` 是通过启动链加载的 EFI 应用，不能刷到 `abl` 或 `efisp` 分区。静态补丁校验不能证明实机一定能启动，现有 ABL / BDS 启动链还需匹配。
 
 ### 3. OTA 升级
 重启进行 OTA 更新前，使用模块 WebUI 刷写以保留旧版本 ABL。“更新 efisp”默认开启；跨版本升级时请保持开启，否则可能卡一屏。

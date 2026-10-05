@@ -96,7 +96,7 @@ int32_t source_callback(char* buffer, int32_t size, int32_t now_offset, int8_t c
     #endif
     #ifndef DISABLE_PATCH_5
     int32_t fwd = track_forward_patch_strb(buffer, size, now_offset, current_target, anchor_offset);
-    if (fwd <= 0) {
+    if (fwd != SUCCESS) {
         printf("Warning: sink STRB not found after anchor 0x%X\n", anchor_offset);
         return -1;
     }
