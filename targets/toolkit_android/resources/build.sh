@@ -11,7 +11,7 @@ if [ ! -f ./LinuxLoader.efi ]; then
 fi
 
 mv ./LinuxLoader.efi ./ABL_original.efi
-if ! ./bin/patch_abl ./ABL_original.efi ./efisp/boot.efi > ./patch_log.txt 2>&1; then
+if ! ./bin/patch_abl ./ABL_original.efi ./efisp/boot.efi "$@" > ./patch_log.txt 2>&1; then
   cat ./patch_log.txt
   echo "ERROR: patch_abl failed"
   exit 1
