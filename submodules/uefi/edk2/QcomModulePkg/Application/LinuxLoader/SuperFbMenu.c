@@ -307,131 +307,237 @@ SfbDebounceMenuExit (VOID)
 
 /* ---- boot menu ---------------------------------------------------------- */
 
+typedef enum {
+  SfbRowEntry = 0,   /* launches List->Entry[Entry] */
+  SfbRowFolder,      /* opens the next level of the name hierarchy */
+  SfbRowBack,
+  SfbRowAdvanced,
+  SfbRowPowerOff,
+  SfbRowRestart
+} SFB_ROW_KIND;
+
+typedef struct {
+  SFB_ROW_KIND  Kind;
+  UINTN         Entry;
+  CHAR16        Text[SFB_NAME_CHARS];
+} SFB_MENU_ROW;
+
+#define SFB_MAX_MENU_ROWS  (SFB_MAX_ENTRIES + 4)
+
 STATIC
 VOID
-SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
-             IN UINTN                Cursor,
-             IN CONST CHAR16         *Title)
+SfbAddRow (IN OUT SFB_MENU_ROW  *Rows,
+           IN OUT UINTN         *Count,
+           IN SFB_ROW_KIND      Kind,
+           IN UINTN             Entry,
+           IN CONST CHAR16      *Text)
 {
-  UINTN  Start;
-  UINTN  Index;
-  UINTN  Last;
-
-  SfbBeginScreen (Title, NULL);
-
-  if (Menu->Count == 0) {
-    Print (L"  No boot entries found.\r\n");
+  if (*Count >= SFB_MAX_MENU_ROWS) {
+    return;
   }
+  Rows[*Count].Kind = Kind;
+  Rows[*Count].Entry = Entry;
+  StrnCpyS (Rows[*Count].Text, SFB_NAME_CHARS, Text, SFB_NAME_CHARS - 1);
+  (*Count)++;
+}
 
-  Start = SfbWindowStart (Cursor, Menu->Count, SFB_VISIBLE_ROWS);
-  Last = Start + SFB_VISIBLE_ROWS;
-  if (Last > Menu->Count) {
-    Last = Menu->Count;
-  }
+/*
+ * The rows of one menu level: the entries directly under Prefix, in list
+ * order, with every deeper group folded into one folder row where its first
+ * entry sits. The root ends with the built-ins; other levels with Back.
+ */
+STATIC
+UINTN
+SfbBuildRows (IN CONST SFB_ENTRY_LIST *List,
+              IN CONST CHAR16         *Prefix,
+              OUT SFB_MENU_ROW        *Rows)
+{
+  UINTN    Count = 0;
+  UINTN    Index;
+  UINTN    Row;
+  CHAR16   Child[SFB_NAME_CHARS];
+  BOOLEAN  IsFolder;
+  BOOLEAN  Seen;
 
-  for (Index = Start; Index < Last; Index++) {
-    CONST SFB_BOOT_ENTRY  *Entry = &Menu->Entry[Index];
-    CONST CHAR16          *Marker = (Index == Menu->DefaultIndex) ? L"*" : L" ";
-
-    /* Submenu rows get a trailing '>' so it is obvious they open another list
-     * rather than launch an image. */
-    if (Entry->Kind == SfbEntrySubmenu) {
-      CHAR16  Text[SFB_DESC_CHARS + 4];
-
-      UnicodeSPrint (Text, sizeof (Text), L"%s >", Entry->Desc);
-      SfbDrawRow ((BOOLEAN)(Index == Cursor), Marker, Text);
-    } else {
-      SfbDrawRow ((BOOLEAN)(Index == Cursor), Marker, Entry->Desc);
+  for (Index = 0; Index < List->Count; Index++) {
+    if (!SfbEntryNameChild (List->Entry[Index].Spec.Name, Prefix, Child,
+                            ARRAY_SIZE (Child), &IsFolder)) {
+      continue;
+    }
+    if (!IsFolder) {
+      SfbAddRow (Rows, &Count, SfbRowEntry, Index, Child);
+      continue;
+    }
+    Seen = FALSE;
+    for (Row = 0; Row < Count; Row++) {
+      if (Rows[Row].Kind == SfbRowFolder && StrCmp (Rows[Row].Text, Child) == 0) {
+        Seen = TRUE;
+        break;
+      }
+    }
+    if (!Seen) {
+      SfbAddRow (Rows, &Count, SfbRowFolder, SFB_NO_INDEX, Child);
     }
   }
 
-  if (Last < Menu->Count) {
-    Print (L"    ... %u more\r\n", (UINT32)(Menu->Count - Last));
+  if (Prefix[0] == L'\0') {
+    SfbAddRow (Rows, &Count, SfbRowAdvanced, SFB_NO_INDEX, L"Advanced");
+    SfbAddRow (Rows, &Count, SfbRowPowerOff, SFB_NO_INDEX, L"Power Off");
+    SfbAddRow (Rows, &Count, SfbRowRestart, SFB_NO_INDEX, L"Restart");
+  } else {
+    SfbAddRow (Rows, &Count, SfbRowBack, SFB_NO_INDEX, L"Back");
+  }
+  return Count;
+}
+
+STATIC
+VOID
+SfbDrawMenu (IN CONST SFB_MENU_ROW *Rows,
+             IN UINTN              Count,
+             IN UINTN              Cursor,
+             IN CONST CHAR16       *Title)
+{
+  UINTN   Start;
+  UINTN   Index;
+  UINTN   Last;
+  CHAR16  Text[SFB_NAME_CHARS + 4];
+
+  SfbBeginScreen (Title, NULL);
+
+  Start = SfbWindowStart (Cursor, Count, SFB_VISIBLE_ROWS);
+  Last = Start + SFB_VISIBLE_ROWS;
+  if (Last > Count) {
+    Last = Count;
+  }
+
+  for (Index = Start; Index < Last; Index++) {
+    /* Folder rows get a trailing '>' so it is obvious they open another list
+     * rather than launch an image. */
+    if (Rows[Index].Kind == SfbRowFolder) {
+      UnicodeSPrint (Text, sizeof (Text), L"%s >", Rows[Index].Text);
+      SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", Text);
+    } else {
+      SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", Rows[Index].Text);
+    }
+  }
+
+  if (Last < Count) {
+    Print (L"    ... %u more\r\n", (UINT32)(Count - Last));
   }
 
   SfbEndScreen (L"Vol Up/Down: move   Power: select");
 }
 
-/*
- * Run a submenu defined by the ENTRIES file at EntriesPath on Volume. The file
- * is parsed exactly like the root BOOTENTRIES, and may itself contain further
- * '%' submenu rows; Depth bounds the nesting so a chain of files that points at
- * one another cannot recurse without limit. The submenu state is heap-allocated
- * (a single SFB_MENU_STATE is ~17 KB) so deep nesting stays off the call stack.
- *
- * Returns when the user picks the trailing "Back" row, or when the file could
- * not be built at all; the caller then redraws its own menu.
- */
+/* Refresh the shared list from the volumes and store the result. */
 STATIC
 VOID
-SfbRunSubMenu (IN EFI_HANDLE   Volume,
-               IN CONST CHAR16 *EntriesPath,
-               IN CONST CHAR16 *Title,
-               IN UINTN        Depth)
+SfbRefreshEntries (VOID)
 {
-  SFB_MENU_STATE  *Menu = NULL;
+  SFB_ENTRY_LIST  *List = SfbEntries ();
+
+  if (List != NULL) {
+    (VOID)SfbUpdateEntries (List, NULL);
+    (VOID)SfbWriteStoredEntries (List);
+  }
+}
+
+/*
+ * Run one level of the menu, Prefix naming it ("" for the root). Returns TRUE
+ * when the user picked "Enter Fastboot" in Advanced; FALSE when Back left a
+ * nested level.
+ */
+STATIC
+BOOLEAN
+SfbRunMenuLevel (IN CONST CHAR16 *Prefix, IN UINTN Depth)
+{
+  SFB_ENTRY_LIST  *List = SfbEntries ();
+  SFB_MENU_ROW    *Rows;
+  UINTN           Count = 0;
   UINTN           Cursor = 0;
   BOOLEAN         Rebuild = TRUE;
+  BOOLEAN         Fastboot = FALSE;
   SFB_KEY         Key;
   EFI_STATUS      Status;
+  CHAR16          *ChildPrefix;
 
-  Menu = AllocateZeroPool (sizeof (*Menu));
-  if (Menu == NULL) {
-    return;
+  Rows = AllocateZeroPool (SFB_MAX_MENU_ROWS * sizeof (*Rows));
+  ChildPrefix = AllocateZeroPool (SFB_NAME_CHARS * 2 * sizeof (CHAR16));
+  if (List == NULL || Rows == NULL || ChildPrefix == NULL) {
+    goto Done;
   }
-  Menu->DefaultIndex = SFB_NO_INDEX;
 
   while (TRUE) {
-    UINTN  Chosen;
-
     if (Rebuild) {
-      SfbFreeMenu (Menu);
-      Status = SfbBuildSubMenu (Menu, Volume, EntriesPath);
-      if (EFI_ERROR (Status)) {
-        SfbReportStatus (Title, Status);
-        break;
+      Count = SfbBuildRows (List, Prefix, Rows);
+      if (Cursor >= Count) {
+        Cursor = 0;
       }
-      Cursor = 0;
       Rebuild = FALSE;
     }
 
-    SfbDrawMenu (Menu, Cursor, Title);
+    SfbDrawMenu (Rows, Count, Cursor, (Prefix[0] == L'\0') ? L"Boot Menu"
+                                                          : Prefix);
 
-    /* Same input model as the root menu: volume keys move, power confirms. */
+    /* The menu is purely interactive: it waits for a key indefinitely and
+     * never launches anything unattended. */
     Key = SfbWaitForKey (0);
-
     if (Key == SfbKeyUp || Key == SfbKeyDown) {
-      SfbMoveCursor (&Cursor, Menu->Count, Key);
+      SfbMoveCursor (&Cursor, Count, Key);
+      continue;
+    }
+    if (Count == 0) {
       continue;
     }
 
-    if (Menu->Count == 0) {
-      continue;
-    }
-
-    Chosen = Cursor;
-    switch (Menu->Entry[Chosen].Kind) {
-    case SfbEntryBack:
+    switch (Rows[Cursor].Kind) {
+    case SfbRowBack:
       /* Returning to the parent: debounce the confirming key first. */
       SfbDebounceMenuExit ();
-      goto done;
+      goto Done;
 
-    case SfbEntrySubmenu:
-      if (Depth >= SFB_MAX_SUBMENU_DEPTH) {
-        SfbReportStatus (L"Submenu too deep", EFI_BUFFER_TOO_SMALL);
-      } else {
-        SfbRunSubMenu (Menu->Entry[Chosen].Volume,
-                       Menu->Entry[Chosen].Path,
-                       Menu->Entry[Chosen].Desc,
-                       Depth + 1);
+    case SfbRowFolder:
+      if (Depth >= SFB_MAX_MENU_DEPTH) {
+        SfbReportStatus (L"Menu too deep", EFI_BUFFER_TOO_SMALL);
+        break;
       }
-      /* Media may have changed while the child menu was open. */
+      if (Prefix[0] == L'\0') {
+        StrCpyS (ChildPrefix, SFB_NAME_CHARS * 2, Rows[Cursor].Text);
+      } else {
+        UnicodeSPrint (ChildPrefix, SFB_NAME_CHARS * 2 * sizeof (CHAR16),
+                       L"%s\\%s", Prefix, Rows[Cursor].Text);
+      }
+      if (SfbRunMenuLevel (ChildPrefix, Depth + 1)) {
+        Fastboot = TRUE;
+        goto Done;
+      }
       Rebuild = TRUE;
       break;
 
-    case SfbEntryEfiFile:
+    case SfbRowAdvanced:
+      /* Advanced owns fastboot: a TRUE return means the user picked "Enter
+       * Fastboot" there and the caller should hand over to it. */
+      if (SfbRunAdvancedMenu ()) {
+        Fastboot = TRUE;
+        goto Done;
+      }
+      /* Priority, Management or a config export may have changed the list.
+       * No rescan here: it would put back an entry just deleted. */
+      Rebuild = TRUE;
+      break;
+
+    case SfbRowPowerOff:
+      SfbShowActionScreen (L"Powering off...");
+      ShutdownDevice ();
+      break;
+
+    case SfbRowRestart:
+      SfbShowActionScreen (L"Restarting...");
+      RebootDevice (NORMAL_MODE);
+      break;
+
+    case SfbRowEntry:
     default:
-      Status = SfbLaunchEntry (&Menu->Entry[Chosen], TRUE, TRUE);//Entries in submenu never defaults
+      Status = SfbLaunchEntry (&List->Entry[Rows[Cursor].Entry], TRUE, NULL);
       if (EFI_ERROR (Status)) {
         SfbReportStatus (L"Boot failed", Status);
       }
@@ -440,95 +546,20 @@ SfbRunSubMenu (IN EFI_HANDLE   Volume,
     }
   }
 
-done:
-  SfbFreeMenu (Menu);
-  FreePool (Menu);
+Done:
+  if (Rows != NULL) {
+    FreePool (Rows);
+  }
+  if (ChildPrefix != NULL) {
+    FreePool (ChildPrefix);
+  }
+  return Fastboot;
 }
 
 BOOLEAN
 SfbRunBootMenu (VOID)
 {
-  SFB_MENU_STATE  Menu;
-  UINTN           Cursor = 0;
-  BOOLEAN         Rebuild = TRUE;
-  SFB_KEY         Key;
-  EFI_STATUS      Status;
-
-  ZeroMem (&Menu, sizeof (Menu));
-  Menu.DefaultIndex = SFB_NO_INDEX;
-
-  while (TRUE) {
-    UINTN  Chosen;
-
-    if (Rebuild) {
-      SfbFreeMenu (&Menu);
-      SfbBuildMenu (&Menu);
-      Cursor = (Menu.DefaultIndex == SFB_NO_INDEX) ? 0 : Menu.DefaultIndex;
-      Rebuild = FALSE;
-    }
-
-    SfbDrawMenu (&Menu, Cursor, L"Boot Menu");
-
-    /* The menu is purely interactive: it waits for a key indefinitely and
-     * never launches anything unattended. */
-    Key = SfbWaitForKey (0);
-
-    if (Key == SfbKeyUp || Key == SfbKeyDown) {
-      SfbMoveCursor (&Cursor, Menu.Count, Key);
-      continue;
-    }
-
-    Chosen = Cursor;
-
-    if (Menu.Count == 0) {
-      continue;
-    }
-
-    switch (Menu.Entry[Chosen].Kind) {
-    case SfbEntryAdvanced:
-      /* Advanced owns fastboot now: a TRUE return means the user picked
-       * "Enter Fastboot" there and the caller should hand over to it. */
-      if (SfbRunAdvancedMenu ()) {
-        SfbFreeMenu (&Menu);
-        return TRUE;
-      }
-      /* Storage and media state changed inside the submenu. */
-      Rebuild = TRUE;
-      break;
-
-    case SfbEntrySubmenu:
-      SfbRunSubMenu (Menu.Entry[Chosen].Volume,
-                     Menu.Entry[Chosen].Path,
-                     Menu.Entry[Chosen].Desc,
-                     1);
-      /* Media may have changed while the submenu was open. */
-      Rebuild = TRUE;
-      break;
-
-    case SfbEntryBack:
-      /* Only submenus carry a Back row; the root menu never adds one. */
-      Rebuild = TRUE;
-      break;
-
-    case SfbEntryPowerOff:
-      SfbShowActionScreen (L"Powering off...");
-      ShutdownDevice ();
-      break;
-
-    case SfbEntryRestart:
-      SfbShowActionScreen (L"Restarting...");
-      RebootDevice (NORMAL_MODE);
-      break;
-
-    case SfbEntryEfiFile:
-    default:
-      Status = SfbLaunchEntry (&Menu.Entry[Chosen], FALSE, TRUE);
-      if (EFI_ERROR (Status)) {
-        SfbReportStatus (L"Boot failed", Status);
-      }
-      /* Media or variables may have changed while the image ran. */
-      Rebuild = TRUE;
-      break;
-    }
-  }
+  /* The menu always starts from a fresh scan, stored before it is shown. */
+  SfbRefreshEntries ();
+  return SfbRunMenuLevel (L"", 0);
 }

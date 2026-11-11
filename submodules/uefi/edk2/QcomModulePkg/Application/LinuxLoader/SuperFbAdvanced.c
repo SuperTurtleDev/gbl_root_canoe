@@ -1,10 +1,15 @@
 /*
- * Advanced submenu: USB mass-storage export of UFS LUNs and partitions.
+ * Advanced submenu: USB mass-storage export of UFS LUNs, partitions and the
+ * config store, the grouped volume browser, and boot entry order/deletion.
  *
  *   Advanced
- *    `- USB Mass Storage
- *        |- Export a partition   -> LUN picker -> partition picker -> mode
- *        `- Export a LUN         -> LUN picker -> mode
+ *    |- USB Mass Storage
+ *    |   |- Export a partition   -> LUN picker -> partition picker -> mode
+ *    |   |- Export a LUN         -> LUN picker -> mode
+ *    |   `- Export Config Store  -> mode
+ *    |- Volumes
+ *    |- Boot Entries Priority
+ *    `- Boot Entries Management
  *
  * A partition is exported behind a RAM-backed fake GPT so the host sees a
  * valid one-partition disk instead of an uninitialized one; the fake tables
@@ -28,13 +33,17 @@
 #include <Library/MemoryAllocationLib.h>
 #include <Library/PartitionTableUpdate.h>
 #include <Library/PrintLib.h>
+#include <Library/SfbConfigStore.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Protocol/BlockIo.h>
 #include <Protocol/DevicePath.h>
+#include <Guid/Gpt.h>
 #include <Uefi/UefiGpt.h>
 
 #define SFB_ADV_ROW_CHARS  80
+
+typedef CHAR16  SFB_ADV_ROW[SFB_ADV_ROW_CHARS];
 #define SFB_ADV_MAX_LUNS   MAX_LUNS
 
 /* Snapshot of one pickable target, resolved at list build time. The handles
@@ -510,188 +519,234 @@ SfbAdvExportLunFlow (VOID)
   }
 }
 
-/* ---- virtual disk (efisp.fat) export -------------------------------------- */
+/* ---- config store export ------------------------------------------------ */
+
+typedef struct {
+  BOOLEAN  ReadOnly;
+} SFB_ADV_CONFIG_EXPORT;
 
 /*
- * Label the blob mounted from SourceVolume as virtual(LUNx:name:idx): the LUN,
- * the GPT name and the GPT entry number of the mother partition carrying the
- * efisp.fat file, so the row names where the image lives.
+ * Export the config container the way a partition is exported: behind a
+ * synthesized one-partition GPT whose ESP-typed entry covers exactly the
+ * container, so the host mounts it as an ordinary FAT partition.
  */
 STATIC
-VOID
-SfbAdvVirtualLabel (IN EFI_HANDLE Source, OUT CHAR16 *Out, IN UINTN OutChars)
+EFI_STATUS
+SfbAdvExportConfigSink (IN EFI_BLOCK_IO_PROTOCOL *Container, IN VOID *Context)
 {
-  EFI_PARTITION_ENTRY  *Entry = NULL;
-  UINT32               Lun;
-  UINT32               MaxLuns = GetMaxLuns ();
-  UINTN                j;
+  SFB_ADV_CONFIG_EXPORT  *Export = Context;
+  SFB_SYNTH_DISK         *Disk = NULL;
+  CHAR16                 Detail[96];
+  UINT64                 Bytes;
+  EFI_STATUS             Status;
 
-  for (Lun = 0; Lun < MaxLuns && Lun < MAX_LUNS; Lun++) {
-    for (j = 0; j < Ptable[Lun].MaxHandles; j++) {
-      if (Ptable[Lun].HandleInfoList[j].Handle != Source) {
-        continue;
-      }
-      if (EFI_ERROR (gBS->HandleProtocol (Ptable[Lun].HandleInfoList[j].Handle,
-                                          &gEfiPartitionRecordGuid,
-                                          (VOID **)&Entry)) || Entry == NULL) {
-        break;
-      }
-      UnicodeSPrint (Out, OutChars, L"virtual(LUN%u:%s:%u)",
-                     Lun, Entry->PartitionName, (UINT32)(j + 1));
-      return;
-    }
+  Bytes = (Container->Media->LastBlock + 1) *
+          (UINT64)Container->Media->BlockSize;
+
+  Status = SfbSynthDiskCreate (Container, 0, Container->Media->LastBlock + 1,
+                               &gEfiPartTypeSystemPartGuid,
+                               SFB_CONFIG_PARTITION_NAME, Export->ReadOnly,
+                               &Disk);
+  if (EFI_ERROR (Status)) {
+    return Status;
   }
-  StrCpyS (Out, OutChars, L"virtual(efisp.fat)");
+
+  UnicodeSPrint (Detail, sizeof (Detail), L"Config store (%a)",
+                 Export->ReadOnly ? "read-only" : "read-write");
+  Status = SfbUsbMsdExportBlkIo (&Disk->BlockIo, L"USB Mass Storage", Detail,
+                                 Bytes);
+  SfbSynthDiskDestroy (Disk);
+  return Status;
+}
+
+STATIC
+VOID
+SfbAdvExportConfigFlow (VOID)
+{
+  SFB_ADV_CONFIG_EXPORT  Export;
+  EFI_STATUS             Status;
+  SFB_ENTRY_LIST         *List;
+
+  SfbShowEnteringScreen (L"Export Config Store");
+
+  Export.ReadOnly = TRUE;
+  if (!SfbAdvChooseMountMode (L"the config store", &Export.ReadOnly)) {
+    return;
+  }
+
+  Status = SfbConfigStoreExportUsb (SfbAdvExportConfigSink, &Export);
+  if (EFI_ERROR (Status) && Status != EFI_ABORTED &&
+      Status != EFI_MEDIA_CHANGED) {
+    SfbReportStatus (L"Could not export the config store", Status);
+  }
+
+  /* The host may have edited CONFIG\ENTRIES.CFG: it is the list now. */
+  List = SfbEntries ();
+  if (List != NULL) {
+    (VOID)SfbLoadStoredEntries (List);
+  }
+}
+
+/* ---- boot entry priority and management --------------------------------- */
+
+/* One row per stored entry, full hierarchical name. NULL when empty. */
+STATIC
+SFB_ADV_ROW *
+SfbAdvEntryRows (IN CONST SFB_ENTRY_LIST *List)
+{
+  SFB_ADV_ROW  *Rows;
+  UINTN   Index;
+
+  if (List->Count == 0) {
+    return NULL;
+  }
+  Rows = AllocateZeroPool (List->Count * sizeof (*Rows));
+  if (Rows == NULL) {
+    return NULL;
+  }
+  for (Index = 0; Index < List->Count; Index++) {
+    StrnCpyS (Rows[Index], SFB_ADV_ROW_CHARS, List->Entry[Index].Spec.Name,
+              SFB_ADV_ROW_CHARS - 1);
+  }
+  return Rows;
+}
+
+STATIC
+VOID
+SfbAdvStore (IN CONST SFB_ENTRY_LIST *List)
+{
+  EFI_STATUS  Status;
+
+  Status = SfbWriteStoredEntries (List);
+  if (EFI_ERROR (Status)) {
+    SfbReportStatus (L"Could not store the boot entries", Status);
+  }
 }
 
 /*
- * Export an auto-mounted efisp.fat container to the host. The published FAT
- * view is withdrawn first (disconnect, flush, uninstall) so the host owns the
- * disk exclusively - mirroring the 7.x container's export order - and
- * republished when the session ends. Read-only exports go through the
- * pass-through wrapper so a host write is swallowed instead of reaching a
- * vendor driver error path.
+ * Pick an entry, then carry it up and down the boot order with the volume
+ * keys; power drops it in place and the new order is stored.
  */
 STATIC
 VOID
-SfbAdvExportVirtualFlow (VOID)
+SfbRunPriorityMenu (VOID)
 {
-  CHAR16              (*Rows)[SFB_ADV_ROW_CHARS];
-  UINTN               Slots[24];
-  UINTN               Count;
-  UINTN               Shown;
-  INTN                Chosen;
-  UINTN               Blob;
-  EFI_STATUS          Status;
-  BOOLEAN             ReadOnly = TRUE;
-  CHAR16              Target[64];
-  CHAR16              Detail[96];
-  SFB_SYNTH_DISK      *Wrap = NULL;
-  EFI_BLOCK_IO_PROTOCOL *BlkIo;
-  UINT64              Bytes;
+  SFB_ENTRY_LIST  *List = SfbEntries ();
+  CHAR16          (*Rows)[SFB_ADV_ROW_CHARS];
+  INTN            Chosen;
+  UINTN           Pos;
+  UINTN           Index;
+  UINTN           Start;
+  UINTN           Last;
+  BOOLEAN         Moved;
+  SFB_KEY         Key;
 
-  SfbShowEnteringScreen (L"Export a Virtual Disk");
+  SfbShowEnteringScreen (L"Boot Entries Priority");
+  if (List == NULL) {
+    return;
+  }
 
+  Pos = 0;
   while (TRUE) {
-    Count = SfbFatBlobCount ();
-    if (Count == 0) {
-      SfbReportStatus (L"No efisp.fat is mounted", EFI_NOT_FOUND);
-      return;
-    }
-
-    Rows = AllocateZeroPool (Count * sizeof (*Rows));
+    Rows = SfbAdvEntryRows (List);
     if (Rows == NULL) {
+      SfbReportStatus (L"No boot entries", EFI_NOT_FOUND);
       return;
     }
-
-    Shown = 0;
-    for (Blob = 0; Blob < Count && Shown < 24; Blob++) {
-      if (SfbFatBlobDisk (Blob) == NULL) {
-        /* Withdrawn for an export already; leave it out of the list. */
-        continue;
-      }
-      SfbAdvVirtualLabel (SfbFatBlobSource (Blob), Rows[Shown],
-                          SFB_ADV_ROW_CHARS);
-      Slots[Shown] = Blob;
-      Shown++;
-    }
-
-    if (Shown == 0) {
-      FreePool (Rows);
-      SfbReportStatus (L"No efisp.fat is mounted", EFI_NOT_FOUND);
-      return;
-    }
-
-    Chosen = SfbAdvChoose (L"Export a Virtual Disk",
-                           L"Pick the mounted container to export.",
-                           Rows, Shown, 0);
+    Chosen = SfbAdvChoose (L"Boot Entries Priority",
+                           L"Boot order, first is tried first. Pick one to move.",
+                           Rows, List->Count, Pos);
     FreePool (Rows);
     if (Chosen < 0) {
       return;
     }
-    Blob = Slots[Chosen];
 
-    SfbAdvVirtualLabel (SfbFatBlobSource (Blob), Target, ARRAY_SIZE (Target));
-    if (!SfbAdvChooseMountMode (Target, &ReadOnly)) {
-      continue;
-    }
-
-    Status = SfbFatBlobWithdraw (Blob);
-    if (EFI_ERROR (Status)) {
-      SfbReportStatus (L"Could not withdraw the container", Status);
-      (VOID)SfbFatBlobRestore (Blob);
-      continue;
-    }
-
-    BlkIo = SfbFatBlobImageDisk (Blob);
-    if (BlkIo == NULL) {
-      SfbReportStatus (L"Container unavailable", EFI_NOT_FOUND);
-      (VOID)SfbFatBlobRestore (Blob);
-      continue;
-    }
-
-    if (ReadOnly) {
-      Status = SfbPassDiskCreate (BlkIo, TRUE, &Wrap);
-      if (EFI_ERROR (Status)) {
-        SfbReportStatus (L"Could not wrap container", Status);
-        (VOID)SfbFatBlobRestore (Blob);
-        continue;
+    Pos = (UINTN)Chosen;
+    Moved = FALSE;
+    while (TRUE) {
+      SfbBeginScreen (L"Boot Entries Priority", L"Moving the marked entry.");
+      Start = SfbWindowStart (Pos, List->Count, SFB_VISIBLE_ROWS);
+      Last = MIN (Start + SFB_VISIBLE_ROWS, List->Count);
+      for (Index = Start; Index < Last; Index++) {
+        SfbDrawRow ((BOOLEAN)(Index == Pos), (Index == Pos) ? L"=" : L" ",
+                    List->Entry[Index].Spec.Name);
       }
-      Bytes = (Wrap->Media.LastBlock + 1) * (UINT64)Wrap->Media.BlockSize;
-      BlkIo = &Wrap->BlockIo;
-    } else {
-      Bytes = (BlkIo->Media->LastBlock + 1) *
-              (UINT64)BlkIo->Media->BlockSize;
+      SfbEndScreen (L"Vol Up/Down: move entry   Power: done");
+
+      Key = SfbWaitForKey (0);
+      if (Key == SfbKeyUp && Pos > 0) {
+        SfbEntryListMove (List, Pos, Pos - 1);
+        Pos--;
+        Moved = TRUE;
+      } else if (Key == SfbKeyDown && Pos + 1 < List->Count) {
+        SfbEntryListMove (List, Pos, Pos + 1);
+        Pos++;
+        Moved = TRUE;
+      } else if (Key == SfbKeySelect) {
+        break;
+      }
     }
 
-    UnicodeSPrint (Detail, sizeof (Detail), L"%s (%a)", Target,
-                   ReadOnly ? "read-only" : "read-write");
-    Status = SfbUsbMsdExportBlkIo (BlkIo, L"USB Mass Storage", Detail, Bytes);
-
-    if (Wrap != NULL) {
-      SfbSynthDiskDestroy (Wrap);
-      Wrap = NULL;
+    if (Moved) {
+      SfbAdvStore (List);
     }
-    (VOID)SfbFatBlobRestore (Blob);
+    SfbDebounceMenuExit ();
+  }
+}
 
-    if (EFI_ERROR (Status) && Status != EFI_ABORTED &&
-        Status != EFI_MEDIA_CHANGED) {
-      SfbReportStatus (L"Could not start mass storage", Status);
+/* Pick an entry and delete it from the stored list. */
+STATIC
+VOID
+SfbRunManagementMenu (VOID)
+{
+  STATIC CONST CHAR16  Confirm[2][SFB_ADV_ROW_CHARS] = {
+    L"Delete",
+    L"Keep"
+  };
+  SFB_ENTRY_LIST  *List = SfbEntries ();
+  CHAR16          (*Rows)[SFB_ADV_ROW_CHARS];
+  INTN            Chosen;
+  UINTN           Cursor = 0;
+
+  SfbShowEnteringScreen (L"Boot Entries Management");
+  if (List == NULL) {
+    return;
+  }
+
+  while (TRUE) {
+    Rows = SfbAdvEntryRows (List);
+    if (Rows == NULL) {
+      SfbReportStatus (L"No boot entries", EFI_NOT_FOUND);
+      return;
     }
-    /* Loop: the container list is re-resolved after the session. */
+    Chosen = SfbAdvChoose (L"Boot Entries Management",
+                           L"Pick an entry to delete.", Rows, List->Count,
+                           Cursor);
+    if (Chosen < 0) {
+      FreePool (Rows);
+      return;
+    }
+    Cursor = (UINTN)Chosen;
+
+    if (SfbAdvChoose (L"Delete boot entry", Rows[Chosen], Confirm, 2, 1) == 0) {
+      SfbEntryListRemove (List, (UINTN)Chosen);
+      SfbAdvStore (List);
+    }
+    FreePool (Rows);
   }
 }
 
 /* ---- grouped volume browser (Advanced > Volumes) -------------------------- */
 
-/* The container image-disk device-path node GUID, mirrored from SuperFbFat.c
- * to classify any container volume - ours or one published by another BDS
- * copy - as a virtual disk. */
-STATIC CONST EFI_GUID mSfbAdvContainerNodeGuid = {
-  0xf1086281, 0xc184, 0x47f7, { 0xbb, 0xae, 0x30, 0x61, 0x1f, 0x90, 0xe2, 0xa4 }
-};
-
-/* TRUE when the handle's device path carries the container vendor node. */
+/* TRUE for the efisp config container volume. */
 STATIC
 BOOLEAN
-SfbAdvIsVirtualVolume (IN EFI_HANDLE Volume)
+SfbAdvIsConfigVolume (IN EFI_HANDLE Volume)
 {
-  EFI_DEVICE_PATH_PROTOCOL  *Dp;
-  EFI_DEVICE_PATH_PROTOCOL  *Node;
+  EFI_HANDLE  Config = NULL;
 
-  Dp = DevicePathFromHandle (Volume);
-  if (Dp == NULL) {
-    return FALSE;
-  }
-  for (Node = Dp; !IsDevicePathEnd (Node); Node = NextDevicePathNode (Node)) {
-    if (Node->Type == MEDIA_DEVICE_PATH && Node->SubType == MEDIA_VENDOR_DP &&
-        (DevicePathNodeLength (Node) >= sizeof (VENDOR_DEVICE_PATH)) &&
-        CompareGuid (&((VENDOR_DEVICE_PATH *)Node)->Guid,
-                     &mSfbAdvContainerNodeGuid)) {
-      return TRUE;
-    }
-  }
-  return FALSE;
+  return (BOOLEAN)(!EFI_ERROR (SfbConfigStoreGetFs (NULL, &Config)) &&
+                   Config == Volume);
 }
 
 /*
@@ -796,7 +851,7 @@ SfbAdvVolumeLabel (IN EFI_HANDLE Volume, OUT CHAR16 *Label, IN UINTN LabelChars)
 /*
  * The grouped volume browser, as a two-level menu: level one picks a storage
  * group - "LUN x" per UFS LUN, "Disk <label>" per other disk such as a USB
- * stick, "Virtual Disks" for efisp.fat containers - and level two lists that
+ * stick, "Config Store" for the efisp config container - and level two lists that
  * group's file systems. Selecting a volume browses it from its root through
  * the ordinary file browser.
  */
@@ -811,7 +866,7 @@ typedef struct {
 /*
  * Snapshot the volumes and their groups. Returns the volume count and fills
  * Groups/VolGroups: VolGroups[i] is the Groups[].Key the volume belongs to.
- * Virtual container volumes all belong to one synthetic group (Key = NULL).
+ * The config container belongs to one synthetic group (Key = NULL).
  * Volumes whose parent disk cannot be resolved each form their own group.
  */
 STATIC
@@ -822,7 +877,7 @@ SfbAdvCollectVolumes (OUT SFB_ADV_GROUP  *Groups,
                       OUT EFI_HANDLE     *Volumes,
                       OUT EFI_HANDLE     *VolGroups,
                       IN UINTN           VolMax,
-                      OUT BOOLEAN        *HaveVirtual)
+                      OUT BOOLEAN        *HaveConfig)
 {
   EFI_STATUS  Status;
   EFI_HANDLE  *All = NULL;
@@ -834,7 +889,7 @@ SfbAdvCollectVolumes (OUT SFB_ADV_GROUP  *Groups,
   UINTN       Move;
 
   *GroupCount = 0;
-  *HaveVirtual = FALSE;
+  *HaveConfig = FALSE;
 
   Status = gBS->LocateHandleBuffer (ByProtocol,
                                     &gEfiSimpleFileSystemProtocolGuid,
@@ -848,9 +903,9 @@ SfbAdvCollectVolumes (OUT SFB_ADV_GROUP  *Groups,
     INTN        Lun = -1;
     CHAR16      Label[SFB_DESC_CHARS];
 
-    if (SfbAdvIsVirtualVolume (All[Index])) {
-      *HaveVirtual = TRUE;
-      Key = NULL;   /* the synthetic Virtual Disks group */
+    if (SfbAdvIsConfigVolume (All[Index])) {
+      *HaveConfig = TRUE;
+      Key = NULL;   /* the synthetic Config Store group */
     } else {
       EFI_HANDLE  Parent = SfbAdvParentDiskHandle (All[Index]);
 
@@ -893,7 +948,7 @@ SfbAdvCollectVolumes (OUT SFB_ADV_GROUP  *Groups,
       Groups[GroupIdx].Lun = Lun;
       SfbAdvVolumeLabel (All[Index], Label, SFB_DESC_CHARS);
       if (Key == NULL) {
-        StrCpyS (Groups[GroupIdx].Title, SFB_ADV_ROW_CHARS, L"Virtual Disks");
+        StrCpyS (Groups[GroupIdx].Title, SFB_ADV_ROW_CHARS, L"Config Store");
       } else if (Lun >= 0) {
         UnicodeSPrint (Groups[GroupIdx].Title,
                        sizeof (Groups[GroupIdx].Title), L"LUN %d",
@@ -930,7 +985,7 @@ SfbRunVolumesMenu (VOID)
   UINTN          Member;
   INTN           Chosen;
   INTN           ChosenVol;
-  BOOLEAN        HaveVirtual;
+  BOOLEAN        HaveConfig;
   EFI_HANDLE     Volume;
   CHAR16         ChosenLabel[SFB_ADV_ROW_CHARS];
 
@@ -939,7 +994,7 @@ SfbRunVolumesMenu (VOID)
   while (TRUE) {
     VolCount = SfbAdvCollectVolumes (Groups, &GroupCount, SFB_ADV_GROUPS_MAX,
                                      Volumes, VolGroups,
-                                     SFB_ADV_GROUP_VOLS_MAX, &HaveVirtual);
+                                     SFB_ADV_GROUP_VOLS_MAX, &HaveConfig);
     if (VolCount == 0 || GroupCount == 0) {
       SfbReportStatus (L"No file system volumes found", EFI_NOT_FOUND);
       return;
@@ -1042,7 +1097,7 @@ SfbRunMassStorageMenu (VOID)
   STATIC CONST CHAR16 Rows[3][SFB_ADV_ROW_CHARS] = {
     L"Export a partition >",
     L"Export a LUN >",
-    L"Export a Virtual Disk >"
+    L"Export Config Store >"
   };
   INTN Chosen;
 
@@ -1060,7 +1115,7 @@ SfbRunMassStorageMenu (VOID)
     } else if (Chosen == 1) {
       SfbAdvExportLunFlow ();
     } else {
-      SfbAdvExportVirtualFlow ();
+      SfbAdvExportConfigFlow ();
     }
   }
 }
@@ -1068,28 +1123,37 @@ SfbRunMassStorageMenu (VOID)
 BOOLEAN
 SfbRunAdvancedMenu (VOID)
 {
-  STATIC CONST CHAR16 Rows[3][SFB_ADV_ROW_CHARS] = {
+  STATIC CONST CHAR16 Rows[5][SFB_ADV_ROW_CHARS] = {
     L"Enter Fastboot",
     L"USB Mass Storage >",
-    L"Volumes >"
+    L"Volumes >",
+    L"Boot Entries Priority >",
+    L"Boot Entries Management >"
   };
   INTN Chosen;
 
   SfbShowEnteringScreen (L"Advanced");
 
   while (TRUE) {
-    Chosen = SfbAdvChoose (L"Advanced", NULL, Rows, 3, 0);
-    if (Chosen < 0) {
-      return FALSE;
-    }
-    if (Chosen == 0) {
+    Chosen = SfbAdvChoose (L"Advanced", NULL, Rows, ARRAY_SIZE (Rows), 0);
+    switch (Chosen) {
+    case 0:
       /* The caller announces fastboot mode and runs its loop. */
       return TRUE;
-    }
-    if (Chosen == 1) {
+    case 1:
       SfbRunMassStorageMenu ();
-    } else {
+      break;
+    case 2:
       SfbRunVolumesMenu ();
+      break;
+    case 3:
+      SfbRunPriorityMenu ();
+      break;
+    case 4:
+      SfbRunManagementMenu ();
+      break;
+    default:
+      return FALSE;
     }
   }
 }

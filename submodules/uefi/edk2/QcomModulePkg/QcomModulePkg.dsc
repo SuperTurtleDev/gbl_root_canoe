@@ -94,10 +94,12 @@
   DiskIoDxeLib|MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoLib.inf
   FatDxeLib|FatPkg/EnhancedFatDxe/FatLib.inf
   # Read-only EXT4 driver, linked in alongside the FAT stack so the boot menu
-  # can mount the ext4 persist partition. Started by hand from SfbStartFatStack,
+  # can mount ext4 partitions. Started by hand from SfbStartFatStack,
   # exactly like the three above; it binds to Disk I/O handles the connect pass
   # has already built and installs Simple File System on the ext4 partition.
   Ext4DxeLib|Ext4Pkg/Ext4Dxe/Ext4DxeLib.inf
+  # Boot menu config store: the FAT container in efisp after the BDS image.
+  SfbConfigStoreLib|QcomModulePkg/Library/SfbConfigStoreLib/SfbConfigStoreLib.inf
   OrderedCollectionLib|MdePkg/Library/BaseOrderedCollectionRedBlackTreeLib/BaseOrderedCollectionRedBlackTreeLib.inf
   TimeBaseLib|EmbeddedPkg/Library/TimeBaseLib/TimeBaseLib.inf
 

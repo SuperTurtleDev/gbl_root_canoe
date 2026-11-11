@@ -1,0 +1,39 @@
+#
+# Persistent configuration store for the super-fastboot boot menu: one FAT
+# volume in the efisp partition after the 1 MiB BDS image.
+#
+# Copyright (c) 2026, contributors to the canoe ABL tree.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+
+[Defines]
+  INF_VERSION                    = 0x00010006
+  BASE_NAME                      = SfbConfigStoreLib
+  FILE_GUID                      = 3d6f0b8e-2a41-4f7c-9e15-b84c2d7a6e31
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = SfbConfigStoreLib
+
+[Sources]
+  SfbConfigStore.c
+  SuperFbConfigDisk.h
+  SuperFbConfigDisk.c
+  SuperFbConfigFormat.h
+  SuperFbConfigFormat.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  QcomModulePkg/QcomModulePkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  DevicePathLib
+  MemoryAllocationLib
+  UefiBootServicesTableLib
+
+[Protocols]
+  gEfiBlockIoProtocolGuid
+  gEfiDevicePathProtocolGuid
+  gEfiSimpleFileSystemProtocolGuid

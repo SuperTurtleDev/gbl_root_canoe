@@ -78,6 +78,7 @@
 #include <Protocol/EFICardInfo.h>
 #include <Protocol/SimpleTextIn.h>
 #include "SuperFbMenu.h"
+#include <Library/SfbConfigStore.h>
 
 #define MAX_APP_STR_LEN 64
 #define MAX_NUM_FS 10
@@ -229,35 +230,39 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
      * for a genuine Volume Up press, skipping every other key (notably the
      * power key used to switch the device on) rather than being fooled by it.
      * Volume Up (the official recovery key slot) opens the boot menu; no Volume
-     * Up within the window launches the saved default entry.
+     * Up within the window boots the stored entries in order.
      */
     MenuRequested = WaitForVolumeUpKey (1000);
     DEBUG ((EFI_D_INFO, "SFB: power-on volume-up detected=%u\n", MenuRequested));
 
     /*
-     * Now bring up the embedded FAT/USB stack so both the default entry and the
-     * menu can see every FAT32 volume, including one on a USB drive.
+     * Now bring up the embedded FAT/USB stack so every FAT and ext4 volume,
+     * including one on a USB drive, is visible, then mount the efisp config
+     * container that holds the stored boot entries. Neither is fatal: without
+     * them the menu still offers fastboot.
      */
     Status = SfbStartFatStack ();
     if (EFI_ERROR (Status)) {
-      /* Not fatal: the menu still offers fastboot and the program selector. */
       DEBUG ((EFI_D_ERROR, "Unable to start the FAT stack: %r\n", Status));
     }
-
-    if (!MenuRequested) {
-      /* No menu key: boot the saved default. This does not return on success;
-       * it only comes back if there is no saved default or the launch failed,
-       * in which case the menu is shown so the user is never stranded. */
-      SfbLaunchDefaultEntry ();
+    Status = SfbConfigStoreMount ();
+    if (EFI_ERROR (Status)) {
+      DEBUG ((EFI_D_ERROR, "Booting without a config store: %r\n", Status));
     }
 
     /*
-     * Reached here because the menu was requested, or there was no default to
-     * boot. Announce it and hold briefly so a still-held volume key is released
-     * before the menu takes input, then run the menu. It only returns TRUE when
-     * the user picked fastboot; FALSE means the menu is done. Fastboot can be
-     * exited back to the menu (its "Exit to menu" row or "exit" from the host),
-     * so the pair runs as a loop.
+     * Load (or build and store) the boot entries and, unless the menu was
+     * requested, try them in order. Only returns when the menu should run:
+     * nothing to boot, the menu key, or every entry failed.
+     */
+    SfbRunStartup ((BOOLEAN)(MenuRequested != 0));
+
+    /*
+     * Announce the menu and hold briefly so a still-held volume key is
+     * released before the menu takes input, then run it. It only returns TRUE
+     * when the user picked fastboot; FALSE means the menu is done. Fastboot
+     * can be exited back to the menu (its "Exit to menu" row or "exit" from
+     * the host), so the pair runs as a loop.
      */
     while (TRUE) {
       SfbShowEnteringMenu ();
@@ -268,6 +273,9 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 
       SfbShowFastbootMode ();
       DEBUG ((EFI_D_INFO, "Boot menu requested fastboot\n"));
+      /* Fastboot may rewrite or erase efisp underneath the container: drop
+       * the FAT view first and pick it up again afterwards. */
+      SfbConfigStoreUnmount ();
       Status = FastbootInitialize ();
       if (EFI_ERROR (Status)) {
         DEBUG ((EFI_D_ERROR, "Failed to Launch Fastboot App: %d\n", Status));
@@ -275,6 +283,8 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
       }
       /* Fastboot exited back to the menu; loop around and show it again. */
       DEBUG ((EFI_D_INFO, "Fastboot exited to the boot menu\n"));
+      (VOID)SfbConfigStoreMount ();
+      (VOID)SfbLoadStoredEntries (SfbEntries ());
     }
   }
 

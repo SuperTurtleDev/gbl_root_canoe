@@ -24,6 +24,14 @@ build:
 	fi
 	mkdir -p ./build
 	cp edk2/Build/RELEASE_CLANG35/AARCH64/LinuxLoader.efi ./build/BDS.efi
+	# efisp holds BDS in its first 1 MiB and the config FAT container after
+	# it. BDS is flashed by its own length (never padded), so it must stay
+	# strictly below 1 MiB or flashing it would overwrite the container.
+	@size=$$(wc -c < ./build/BDS.efi); \
+	if [ "$$size" -ge 1048576 ]; then \
+		echo "BDS.efi is $$size bytes; it must be smaller than 1 MiB"; \
+		exit 1; \
+	fi
 	@echo "BDS built successfully: build/BDS.efi"
 
 # Build the standalone AndroidToolsPkg applications (RebootTools, ArbTools,
