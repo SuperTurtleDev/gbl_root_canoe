@@ -18,6 +18,12 @@
 
 [Includes]
   Include
+  # Freestanding CRT shim (limits.h, string.h, ...). Every consumer of the
+  # mbedtls headers below needs it: check_config.h includes <limits.h>, and
+  # without the shim clang's own limits.h falls through to the host glibc
+  # limits.h, which needs bits/libc-header-start.h that is absent for the
+  # aarch64 cross target on some CI images.
+  Library/Include
   # mbedtls headers, consumed by the mbedtls-based BaseCryptLib and by the
   # SFB security library in QcomModulePkg.
   Library/MbedTlsLib/Include
@@ -25,7 +31,6 @@
 
 [Includes.Common.Private]
   Private
-  Library/Include
   Library/MbedTlsLib/mbedtls/include/mbedtls
   Library/MbedTlsLib/mbedtls/library
 
