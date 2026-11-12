@@ -68,9 +68,12 @@ EFI_STATUS
 SfbStartFatStack (VOID);
 
 /*
- * Every Simple File System volume holding FAT (any width) or ext4: the
- * volumes the boot entry scan looks at. *Handles must be released with
- * FreePool (). The file browser builds its own unfiltered list.
+ * The volume list IS the UFS partition table plus the efisp config container:
+ * the only volumes this loader ever enumerates, shared by the boot entry
+ * scan, the file browser and the Volumes menu. Only entries with a supported
+ * file system (FAT of any width or ext4) are returned. Firmware volumes, USB
+ * media and all other non-UFS disks never appear. *Handles must be released
+ * with FreePool ().
  */
 EFI_STATUS
 SfbLocateVolumes (OUT EFI_HANDLE **Handles, OUT UINTN *Count);
@@ -124,16 +127,16 @@ SfbGetVolumeLabel (IN EFI_FILE_PROTOCOL *Root,
                    IN UINTN             OutChars);
 
 /*
- * (disk, partition) address of a volume, both 0-based: the disk is its index
- * among the whole-disk Block I/O handles in enumeration order, the partition
- * its GPT entry number from the Hard Drive device path node, minus one.
- * EFI_NOT_FOUND for volumes that are not a partition of a disk, such as the
- * efisp config container.
+ * (disk, partition) address of a volume in the volume table, both 0-based:
+ * disk is the UFS LUN number (lun0 = disk 0, lun1 = disk 1, ...), partition
+ * is the index of the partition in Ptable[Lun]. The efisp config container is
+ * appended as the last disk (one past the highest LUN with partitions) at
+ * part 0. EFI_NOT_FOUND for any handle outside the table.
  */
 EFI_STATUS
 SfbGetVolumeAddress (IN EFI_HANDLE Volume, OUT UINT32 *Disk, OUT UINT32 *Part);
 
-/* The file system volume at (Disk, Part), or NULL. */
+/* The volume at (Disk, Part), or NULL. */
 EFI_HANDLE
 SfbFindVolumeByAddress (IN UINT32 Disk, IN UINT32 Part);
 

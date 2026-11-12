@@ -136,14 +136,13 @@ SfbMakeFileEntry (IN EFI_HANDLE      Volume,
   StrnCpyS (Entry->Spec.Name, SFB_NAME_CHARS, Name, SFB_NAME_CHARS - 1);
   StrnCpyS (Entry->Spec.Path, SFB_PATH_CHARS, PathOnVolume, SFB_PATH_CHARS - 1);
 
-  /* A stored entry has to say where it lives: a partition by its (d,p), the
-   * config container by saying nothing. Anything else cannot be stored. */
-  if (!EFI_ERROR (SfbGetVolumeAddress (Volume, &Entry->Spec.Disk,
-                                       &Entry->Spec.Part))) {
-    Entry->Spec.HasAddress = TRUE;
-  } else if (Volume != SfbStoreVolume ()) {
+  /* Every volume in the table has a (d,p) address, including the config
+   * container; anything outside the volume table cannot be stored. */
+  if (EFI_ERROR (SfbGetVolumeAddress (Volume, &Entry->Spec.Disk,
+                                      &Entry->Spec.Part))) {
     return EFI_UNSUPPORTED;
   }
+  Entry->Spec.HasAddress = TRUE;
 
   SfbResolveEntry (Entry, Volume);
   return (Entry->DevicePath != NULL) ? EFI_SUCCESS : EFI_OUT_OF_RESOURCES;
@@ -257,7 +256,18 @@ SfbLoadStoredEntries (IN OUT SFB_ENTRY_LIST *List)
     return Status;
   }
 
-  SfbAppendEntryLines (List, Text, Home, FALSE, 0, 0, FALSE);
+  {
+    UINT32  HomeDisk;
+    UINT32  HomePart;
+    BOOLEAN HomeHasAddress =
+      (BOOLEAN)(!EFI_ERROR (SfbGetVolumeAddress (Home, &HomeDisk, &HomePart)));
+
+    /* Old CONFIG\ENTRIES.CFG lines without (d,p) mean "this volume"; the
+     * config container now has an address, so record it like any other. */
+    SfbAppendEntryLines (List, Text, Home, HomeHasAddress,
+                         HomeHasAddress ? HomeDisk : 0,
+                         HomeHasAddress ? HomePart : 0, FALSE);
+  }
   FreePool (Text);
 
   DEBUG ((EFI_D_INFO, "SFB: %u stored entries\n", (UINT32)List->Count));
@@ -276,8 +286,8 @@ SfbScanVolume (IN OUT SFB_ENTRY_LIST *Found, IN EFI_HANDLE Volume)
   CHAR8              *Text = NULL;
   SFB_BOOT_ENTRY     Entry;
 
-  /* Only partitions can be addressed; that leaves out the config container,
-   * which holds the stored list rather than entries of its own. */
+  /* Every volume in the UFS partition table has an address; only handles
+   * outside it (never returned by SfbLocateVolumes) are skipped. */
   if (EFI_ERROR (SfbGetVolumeAddress (Volume, &Disk, &Part)) ||
       EFI_ERROR (SfbOpenVolumeRoot (Volume, &Root)) || Root == NULL) {
     return;

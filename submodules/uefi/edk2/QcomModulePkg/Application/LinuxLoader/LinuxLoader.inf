@@ -92,7 +92,6 @@
 	MdeModulePkg/MdeModulePkg.dec
 	QcomModulePkg/QcomModulePkg.dec
 	CryptoPkg/CryptoPkg.dec
-	FatPkg/FatPkg.dec
 	Ext4Pkg/Ext4Pkg.dec
 
 [LibraryClasses]
@@ -110,11 +109,10 @@
 	PrintLib
 	MemoryAllocationLib
 	UefiRuntimeServicesTableLib
-	# FAT stack carried inside the image: the boot menu starts these by hand
-	# instead of relying on a DXE dispatcher to do it.
+	# Support stack for the read-only EXT4 driver, started by hand. FAT comes
+	# from the platform firmware's own driver, so EnhancedFatDxe is omitted.
 	UnicodeCollationEngLib
 	DiskIoDxeLib
-	FatDxeLib
 	# Read-only EXT4 driver started the same way, so ext4 partitions are
 	# scanned and browsed like FAT volumes.
 	Ext4DxeLib

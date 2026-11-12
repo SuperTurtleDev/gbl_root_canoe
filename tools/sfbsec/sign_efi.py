@@ -7,9 +7,8 @@ The signature is a PKCS#7 (no signed attributes, SHA-256, via openssl smime)
 over the byte stream the BDS authentihash covers - everything in the file
 except the COFF checksum field, the security data-directory entry and the
 certificate table itself. It is appended as a WIN_CERTIFICATE entry and the
-security directory is patched to point at it. Mirrors SfbPeVerify.c; the
-host round-trip test (tests/sfb/security_roundtrip.py) keeps both honest
-against each other.
+security directory is patched to point at it. Mirrors SfbPeVerify.c in the
+BDS.
 """
 
 import os

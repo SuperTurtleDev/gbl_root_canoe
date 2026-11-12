@@ -1,10 +1,11 @@
 /*
- * Embedded FAT stack for the super-fastboot boot menu.
+ * Volume support for the super-fastboot boot menu.
  *
- * EnhancedFatDxe, DiskIoDxe and the English Unicode Collation driver are linked
- * into this application as static libraries. Their entry points are invoked
- * here by hand rather than by the DXE dispatcher, then a connection pass lets
- * them bind to whatever Block I/O handles the platform published.
+ * FAT file systems come from the platform firmware's own FAT driver. The
+ * read-only EXT4 driver, DiskIoDxe and the English Unicode Collation driver
+ * are linked into this application as static libraries: their entry points
+ * are invoked here by hand rather than by the DXE dispatcher, then a
+ * connection pass binds them to the Block I/O handles the platform published.
  *
  * Copyright (c) 2026, contributors to the canoe ABL tree.
  * SPDX-License-Identifier: BSD-3-Clause
@@ -16,6 +17,8 @@
 #include <Library/BaseMemoryLib.h>
 #include <Library/DebugLib.h>
 #include <Library/MemoryAllocationLib.h>
+#include <Library/PartitionTableUpdate.h>
+#include <Library/SfbConfigStore.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Library/DevicePathLib.h>
@@ -43,11 +46,6 @@ EFI_STATUS
 EFIAPI
 InitializeDiskIo (IN EFI_HANDLE       ImageHandle,
                   IN EFI_SYSTEM_TABLE *SystemTable);
-
-EFI_STATUS
-EFIAPI
-FatEntryPoint (IN EFI_HANDLE       ImageHandle,
-               IN EFI_SYSTEM_TABLE *SystemTable);
 
 EFI_STATUS
 EFIAPI
@@ -131,10 +129,10 @@ SfbStartFatStack (VOID)
   }
 
   /*
-   * EnhancedFatDxe refuses to mount a volume without a Unicode Collation
-   * producer. This installs onto a handle of its own making, and a second
-   * producer alongside a platform-supplied one is harmless: the FAT driver
-   * picks whichever matches the platform language.
+   * Ext4Dxe needs a Unicode Collation producer and Disk I/O on the block
+   * handles. A second producer alongside a platform-supplied one is
+   * harmless: the driver picks whichever matches the platform language.
+   * FAT is already handled by the firmware, so no FAT driver is started.
    */
   Status = InitializeUnicodeCollationEng (gImageHandle, gST);
   if (EFI_ERROR (Status)) {
@@ -154,24 +152,12 @@ SfbStartFatStack (VOID)
     return Status;
   }
 
-  Status = SfbCreateDriverHandle (&FatHandle);
-  if (EFI_ERROR (Status)) {
-    DEBUG ((EFI_D_ERROR, "SFB: FAT handle alloc failed: %r\n", Status));
-    return Status;
-  }
-
-  Status = FatEntryPoint (FatHandle, gST);
-  if (EFI_ERROR (Status)) {
-    DEBUG ((EFI_D_ERROR, "SFB: FAT driver init failed: %r\n", Status));
-    return Status;
-  }
-
   /*
    * The read-only EXT4 driver mounts ext4 partitions so they can be scanned
-   * and browsed like FAT volumes. Same pattern as FAT above: a private handle
-   * carries its driver binding, and the connect pass at the end binds it to
-   * the Disk I/O handles of any ext4 partitions. Failure here is non-fatal to
-   * the FAT stack already up; ext4 volumes simply will not appear.
+   * and browsed like FAT volumes: a private handle carries its driver
+   * binding, and the connect pass at the end binds it to the Disk I/O
+   * handles of any ext4 partitions. Failure here is non-fatal; ext4 volumes
+   * simply will not appear.
    */
   Status = SfbCreateDriverHandle (&FatHandle);
   if (EFI_ERROR (Status)) {
@@ -372,197 +358,156 @@ SfbOpenVolumeRoot (IN EFI_HANDLE Volume, OUT EFI_FILE_PROTOCOL **Root)
   return Fs->OpenVolume (Fs, Root);
 }
 
+typedef struct {
+  EFI_HANDLE  Handle;
+  UINT32      Disk;
+  UINT32      Part;
+} SFB_VOLUME;
+
+STATIC EFI_STATUS SfbListVolumes (OUT SFB_VOLUME **Table, OUT UINTN *Count);
+
 EFI_STATUS
 SfbLocateVolumes (OUT EFI_HANDLE **Handles, OUT UINTN *Count)
 {
-  EFI_STATUS  Status;
-  EFI_HANDLE  *All = NULL;
-  UINTN       AllCount = 0;
+  SFB_VOLUME  *Vols = NULL;
+  EFI_HANDLE  *List;
+  UINTN       VolCount = 0;
   UINTN       Kept = 0;
   UINTN       Index;
 
   *Handles = NULL;
   *Count = 0;
 
-  Status = gBS->LocateHandleBuffer (ByProtocol,
-                                    &gEfiSimpleFileSystemProtocolGuid,
-                                    NULL,
-                                    &AllCount,
-                                    &All);
-  if (EFI_ERROR (Status) || All == NULL) {
-    return EFI_ERROR (Status) ? Status : EFI_NOT_FOUND;
+  if (EFI_ERROR (SfbListVolumes (&Vols, &VolCount)) || VolCount == 0) {
+    return EFI_NOT_FOUND;
   }
 
-  /* Filter in place: FAT of any width and ext4 are the supported boot file
-   * systems. Anything else is dropped - the file browser builds its own
-   * unfiltered list. */
-  for (Index = 0; Index < AllCount; Index++) {
-    if (SfbIsFatVolume (All[Index]) || SfbIsExt4Volume (All[Index])) {
-      All[Kept++] = All[Index];
+  List = AllocateZeroPool (VolCount * sizeof (*List));
+  if (List == NULL) {
+    FreePool (Vols);
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  /* The table IS the volume list; keep the entries that actually carry a
+   * supported file system so the boot-entry scan sees only mountable media. */
+  for (Index = 0; Index < VolCount; Index++) {
+    if (SfbIsFatVolume (Vols[Index].Handle) ||
+        SfbIsExt4Volume (Vols[Index].Handle)) {
+      List[Kept++] = Vols[Index].Handle;
     }
   }
-
-  DEBUG ((EFI_D_INFO, "SFB: %u of %u file systems are FAT/ext4 boot media\n",
-          (UINT32)Kept, (UINT32)AllCount));
+  FreePool (Vols);
 
   if (Kept == 0) {
-    FreePool (All);
+    FreePool (List);
     return EFI_NOT_FOUND;
   }
 
-  *Handles = All;
+  *Handles = List;
   *Count = Kept;
-
   return EFI_SUCCESS;
 }
 
-/* ---- (disk,partition) addressing ----------------------------------------- */
-
-/* Device path size without its end node. */
-STATIC
-UINTN
-SfbDevicePathBodySize (IN EFI_DEVICE_PATH_PROTOCOL *Path)
-{
-  return GetDevicePathSize (Path) - END_DEVICE_PATH_LENGTH;
-}
+/* ---- volume table -------------------------------------------------------- */
 
 /*
- * The whole disks in firmware enumeration order: every Block I/O handle that
- * is not a logical partition. *Disks must be released with FreePool ().
+ * The volume list IS the platform partition table: every Ptable[Lun] entry is
+ * a UFS partition handle, addressed as (Lun, j) - lun0 = disk 0, lun1 = disk
+ * 1, ... The efisp config container is appended as the last disk, one past
+ * the highest LUN that actually has partitions. No other volumes exist for
+ * this loader: firmware volumes, USB media and other non-UFS disks are never
+ * enumerated.
+ *
+ * The table is rebuilt on each call so a USB export session that refreshes
+ * Ptable is picked up immediately. *Table must be released with FreePool ().
  */
 STATIC
 EFI_STATUS
-SfbListDisks (OUT EFI_HANDLE **Disks, OUT UINTN *Count)
+SfbListVolumes (OUT SFB_VOLUME **Table, OUT UINTN *Count)
 {
-  EFI_STATUS  Status;
-  EFI_HANDLE  *All = NULL;
-  UINTN       AllCount = 0;
-  UINTN       Index;
-  UINTN       Kept = 0;
+  SFB_VOLUME  *Vols;
+  UINT32      Lun;
+  UINT32      MaxLuns = GetMaxLuns ();
+  UINT32      ConfigDisk = 0;
+  UINTN       Used = 0;
+  UINTN       j;
+  EFI_HANDLE  Config = NULL;
 
-  *Disks = NULL;
+  *Table = NULL;
   *Count = 0;
-
-  Status = gBS->LocateHandleBuffer (ByProtocol, &gEfiBlockIoProtocolGuid, NULL,
-                                    &AllCount, &All);
-  if (EFI_ERROR (Status) || All == NULL) {
-    return EFI_NOT_FOUND;
+  Vols = AllocateZeroPool ((MAX_NUM_PARTITIONS + 1) * sizeof (*Vols));
+  if (Vols == NULL) {
+    return EFI_OUT_OF_RESOURCES;
   }
 
-  for (Index = 0; Index < AllCount; Index++) {
-    EFI_BLOCK_IO_PROTOCOL  *BlockIo = NULL;
-
-    if (!EFI_ERROR (gBS->HandleProtocol (All[Index], &gEfiBlockIoProtocolGuid,
-                                         (VOID **)&BlockIo)) &&
-        BlockIo != NULL && BlockIo->Media != NULL &&
-        !BlockIo->Media->LogicalPartition &&
-        DevicePathFromHandle (All[Index]) != NULL) {
-      All[Kept++] = All[Index];
+  for (Lun = 0; Lun < MaxLuns && Lun < MAX_LUNS; Lun++) {
+    for (j = 0; j < Ptable[Lun].MaxHandles; j++) {
+      if (Ptable[Lun].HandleInfoList[j].Handle != NULL) {
+        Vols[Used].Handle = Ptable[Lun].HandleInfoList[j].Handle;
+        Vols[Used].Disk = Lun;
+        Vols[Used].Part = (UINT32)j;
+        Used++;
+        if (Lun + 1 > ConfigDisk) {
+          ConfigDisk = Lun + 1;
+        }
+      }
     }
   }
 
-  *Disks = All;
-  *Count = Kept;
-  return EFI_SUCCESS;
-}
-
-/*
- * The GPT entry number of the partition whose device path is Path, when Path
- * is exactly the disk's path (Prefix bytes) plus one Hard Drive node. Anything
- * else below a disk - the config container's vendor node, nested media - is
- * not a partition and has no address.
- */
-STATIC
-EFI_STATUS
-SfbPartitionIndex (IN EFI_DEVICE_PATH_PROTOCOL *Path,
-                   IN UINTN                    Prefix,
-                   OUT UINT32                  *Part)
-{
-  EFI_DEVICE_PATH_PROTOCOL  *Node = (EFI_DEVICE_PATH_PROTOCOL *)((UINT8 *)Path + Prefix);
-  UINT32                    Number;
-
-  if (IsDevicePathEnd (Node) || !IsDevicePathEnd (NextDevicePathNode (Node)) ||
-      DevicePathType (Node) != MEDIA_DEVICE_PATH ||
-      DevicePathSubType (Node) != MEDIA_HARDDRIVE_DP ||
-      DevicePathNodeLength (Node) != sizeof (HARDDRIVE_DEVICE_PATH)) {
-    return EFI_NOT_FOUND;
+  (VOID)SfbConfigStoreGetFs (NULL, &Config);
+  if (Config != NULL) {
+    Vols[Used].Handle = Config;
+    Vols[Used].Disk = ConfigDisk;
+    Vols[Used].Part = 0;
+    Used++;
   }
 
-  Number = ((HARDDRIVE_DEVICE_PATH *)Node)->PartitionNumber;
-  if (Number == 0) {
-    return EFI_NOT_FOUND;
-  }
-  *Part = Number - 1;
+  *Table = Vols;
+  *Count = Used;
   return EFI_SUCCESS;
 }
 
 EFI_STATUS
 SfbGetVolumeAddress (IN EFI_HANDLE Volume, OUT UINT32 *Disk, OUT UINT32 *Part)
 {
-  EFI_STATUS                Status;
-  EFI_DEVICE_PATH_PROTOCOL  *Path;
-  EFI_HANDLE                *Disks = NULL;
-  UINTN                     DiskCount = 0;
-  UINTN                     Index;
+  SFB_VOLUME  *Vols = NULL;
+  UINTN       Count = 0;
+  UINTN       Index;
+  EFI_STATUS  Status = EFI_NOT_FOUND;
 
-  Path = DevicePathFromHandle (Volume);
-  if (Path == NULL) {
-    return EFI_NOT_FOUND;
+  if (EFI_ERROR (SfbListVolumes (&Vols, &Count))) {
+    return EFI_OUT_OF_RESOURCES;
   }
-
-  Status = SfbListDisks (&Disks, &DiskCount);
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  Status = EFI_NOT_FOUND;
-  for (Index = 0; Index < DiskCount; Index++) {
-    EFI_DEVICE_PATH_PROTOCOL  *DiskPath = DevicePathFromHandle (Disks[Index]);
-    UINTN                     Prefix = SfbDevicePathBodySize (DiskPath);
-
-    if (SfbDevicePathBodySize (Path) <= Prefix ||
-        CompareMem (Path, DiskPath, Prefix) != 0) {
-      continue;
-    }
-    /* A shorter disk path can prefix a deeper disk's partitions; keep
-     * looking until the disk the partition sits directly on. */
-    if (!EFI_ERROR (SfbPartitionIndex (Path, Prefix, Part))) {
-      *Disk = (UINT32)Index;
+  for (Index = 0; Index < Count; Index++) {
+    if (Vols[Index].Handle == Volume) {
+      *Disk = Vols[Index].Disk;
+      *Part = Vols[Index].Part;
       Status = EFI_SUCCESS;
       break;
     }
   }
-
-  FreePool (Disks);
+  FreePool (Vols);
   return Status;
 }
 
 EFI_HANDLE
 SfbFindVolumeByAddress (IN UINT32 Disk, IN UINT32 Part)
 {
-  EFI_HANDLE  *Volumes = NULL;
+  SFB_VOLUME  *Vols = NULL;
   UINTN       Count = 0;
   UINTN       Index;
   EFI_HANDLE  Found = NULL;
 
-  if (EFI_ERROR (gBS->LocateHandleBuffer (ByProtocol,
-                                          &gEfiSimpleFileSystemProtocolGuid,
-                                          NULL, &Count, &Volumes)) ||
-      Volumes == NULL) {
+  if (EFI_ERROR (SfbListVolumes (&Vols, &Count))) {
     return NULL;
   }
-
-  for (Index = 0; Index < Count && Found == NULL; Index++) {
-    UINT32  D;
-    UINT32  P;
-
-    if (!EFI_ERROR (SfbGetVolumeAddress (Volumes[Index], &D, &P)) &&
-        D == Disk && P == Part) {
-      Found = Volumes[Index];
+  for (Index = 0; Index < Count; Index++) {
+    if (Vols[Index].Disk == Disk && Vols[Index].Part == Part) {
+      Found = Vols[Index].Handle;
+      break;
     }
   }
-
-  FreePool (Volumes);
+  FreePool (Vols);
   return Found;
 }
 

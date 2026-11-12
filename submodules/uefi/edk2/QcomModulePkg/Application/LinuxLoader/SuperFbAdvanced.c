@@ -851,10 +851,11 @@ SfbAdvVolumeLabel (IN EFI_HANDLE Volume, OUT CHAR16 *Label, IN UINTN LabelChars)
 }
 /*
  * The grouped volume browser, as a two-level menu: level one picks a storage
- * group - "LUN x" per UFS LUN, "Disk <label>" per other disk such as a USB
- * stick, "Config Store" for the efisp config container - and level two lists that
- * group's file systems. Selecting a volume browses it from its root through
- * the ordinary file browser.
+ * group - "LUN x" per UFS LUN, "Disk <label>" per other real disk such as a
+ * USB stick, "Config Store" for the efisp config container - and level two
+ * lists that group's file systems. Firmware volumes and other non-disk media
+ * are filtered out. Selecting a volume browses it from its root through the
+ * ordinary file browser.
  */
 #define SFB_ADV_GROUP_VOLS_MAX  32
 
@@ -892,9 +893,9 @@ SfbAdvCollectVolumes (OUT SFB_ADV_GROUP  *Groups,
   *GroupCount = 0;
   *HaveConfig = FALSE;
 
-  Status = gBS->LocateHandleBuffer (ByProtocol,
-                                    &gEfiSimpleFileSystemProtocolGuid,
-                                    NULL, &Count, &All);
+  /* The volume list IS the UFS partition table plus the config container;
+   * no other file systems are ever enumerated here. */
+  Status = SfbLocateVolumes (&All, &Count);
   if (EFI_ERROR (Status) || All == NULL) {
     return 0;
   }

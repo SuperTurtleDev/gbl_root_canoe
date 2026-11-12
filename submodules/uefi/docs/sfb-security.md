@@ -77,9 +77,8 @@ exempts an image: verification runs with or without it.
 Signing tool: `tools/sfbsec/sign_efi.py <boot.cer> <boot.key> <app.efi>` -
 appends the PKCS#7 (openssl `smime -sign -noattr -binary`) as the
 certificate table entry. Note this is the SFB profile (signature directly
-over the authentihash stream); it is verified by the host round-trip test
-(`tests/sfb/security_roundtrip.py`) against the firmware implementation, not
-the Windows Authenticode profile.
+over the authentihash stream), matching the firmware's authentihash
+implementation in `SfbPeVerify.c`, not the Windows Authenticode profile.
 
 ## Generating keys and installing certificates
 
@@ -95,23 +94,13 @@ container image directly. Keep the `.key` files private; the device never
 needs them. Removing all `.cer` files from a directory switches that feature
 off again on the next boot.
 
-## Tests
+## Verification
 
-- `tests/sfb/security_roundtrip.py` (also run by `tests/sfb/test_sfb.py`):
-  compiles the real `SfbSecurityLib` + mbedtls sources on the host and
-  round-trips both classes against openssl-generated key material -
-  forged/stale/replayed challenges rejected, tampered and unsigned images
-  rejected, privileged boot still verifies.
-- `tests/sfb/qemu_security_test.py` (headless QEMU, S1-S6 in
-  `MANUAL_TESTS.md`): empty cert dirs behave exactly as before; BOOT_CERTS
-  rejects unsigned EFI apps and accepts `sign_efi.py`-signed ones;
-  AUTH_CERTS locks the Advanced menu; with both classes verification still
-  runs independently at boot; with only BOOT_CERTS the menu is privileged
-  with full rows. Fastboot USB cannot run under QEMU (the fastboot stack
-  needs the Qualcomm USB device controller), so the challenge flow stays
-  a real-device test (R1-R5).
-- There are deliberately no test hooks in the production image; the
-  certificate-driven switches are the test seams.
+Verification is on a real device: there are deliberately no test hooks in
+the production image, and the certificate-driven switches are the test
+seams. Add/remove `.cer` files to switch each class on and off, run
+`tools/sfbsec/fastboot_unlock.sh <auth.key>` for the challenge flow, and
+boot signed/unsigned EFI apps to check BOOT_CERTS enforcement.
 
 ## SFB_SECURE_BOOT_PROTOCOL (for EFI applications)
 

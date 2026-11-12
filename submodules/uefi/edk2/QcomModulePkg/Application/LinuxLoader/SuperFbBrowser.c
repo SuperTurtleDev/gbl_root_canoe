@@ -576,14 +576,12 @@ SfbRunFileBrowser (VOID)
   SfbStartFatStack ();
 
   /*
-   * The browser lists every volume that carries a Simple File System, however
-   * the firmware produced it - removable FAT sticks, ext4 partitions, the
-   * efisp config container, anything else recognisable. Browsing always
-   * starts at the volume's own root.
+   * The browser lists the UFS partition table plus the config container -
+   * SfbLocateVolumes () IS the volume list. Firmware volumes, USB media and
+   * other non-UFS disks are never part of it. Browsing always starts at the
+   * volume's own root.
    */
-  Status = gBS->LocateHandleBuffer (ByProtocol,
-                                    &gEfiSimpleFileSystemProtocolGuid,
-                                    NULL, &VolumeCount, &Volumes);
+  Status = SfbLocateVolumes (&Volumes, &VolumeCount);
   if (EFI_ERROR (Status) || Volumes == NULL || VolumeCount == 0) {
     SfbReportStatus (L"No file system volumes found",
                      EFI_ERROR (Status) ? Status : EFI_NOT_FOUND);

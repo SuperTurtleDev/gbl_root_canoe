@@ -87,12 +87,11 @@
   BaseMemoryLib|MdePkg/Library/BaseMemoryLib/BaseMemoryLib.inf
   LzmaDecompressLib|MdeModulePkg/Library/LzmaCustomDecompressLib/LzmaCustomDecompressLib.inf
 
-  # FAT stack linked into LinuxLoader so the boot menu can read FAT32 volumes
-  # even where the platform firmware publishes nothing above Block I/O. These
-  # are the stock EDK2 drivers, re-exported as library classes.
+  # Support stack for the read-only EXT4 driver below, linked into
+  # LinuxLoader. FAT volumes are handled by the platform firmware's own FAT
+  # driver; EnhancedFatDxe is deliberately not linked into this image.
   UnicodeCollationEngLib|MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishLib.inf
   DiskIoDxeLib|MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoLib.inf
-  FatDxeLib|FatPkg/EnhancedFatDxe/FatLib.inf
   # Read-only EXT4 driver, linked in alongside the FAT stack so the boot menu
   # can mount ext4 partitions. Started by hand from SfbStartFatStack,
   # exactly like the three above; it binds to Disk I/O handles the connect pass
