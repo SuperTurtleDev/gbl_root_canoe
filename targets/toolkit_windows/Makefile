@@ -3,8 +3,8 @@
 clean:
 	rm -rf build || true
 copy_resources:
-	mkdir -p build/toolkit
 	mkdir -p build/toolkit/bin
+	mkdir -p build/toolkit/efisp/tools
 	cp -r resources/* build/toolkit/
 submodule_uefi: copy_resources
 	cd ../../submodules/uefi && make build && make tools

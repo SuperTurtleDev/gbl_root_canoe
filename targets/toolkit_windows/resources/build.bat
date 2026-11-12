@@ -66,7 +66,7 @@ echo.
 echo ========================================
 echo Patched. Outputs:
 echo   efisp/boot.efi     - cracked ABL loader ^(fake re-lock^), the ANDROID boot entry
-echo   efisp/BOOTENTRIES  - boot entry list ^(includes the tools submenu^)
+echo   ENTRIES.CFG        - boot entry list ^(copy to the persist volume root^)
 echo   efisp/tools/       - tools submenu ^(Reboot / BL / ARB tools^)
 echo   BDS.efi            - superfastboot BDS ^(flash raw to the efisp partition^)
 echo   ABL_original.efi   - original unpatched loader ^(for analysis; do NOT flash^)
@@ -75,8 +75,9 @@ echo Note: the toolkit is manual-install only; superfb does not provide automate
 echo installation for toolkit users.
 echo.
 echo ---- Manual install flow ^(English^) ----
-echo 1. Copy the efisp/ folder to the persist boot root:
+echo 1. Copy the efisp/ folder and ENTRIES.CFG to persist:
 echo      cp -r efisp/. /mnt/vendor/persist/efisp/
+echo      cp ENTRIES.CFG /mnt/vendor/persist/ENTRIES.CFG
 echo    ^(create /mnt/vendor/persist/efisp first if needed, e.g. via MT Manager^)
 echo 2. sync
 if "%GBL_OK%"=="no" (
@@ -90,8 +91,9 @@ if "%GBL_OK%"=="no" (
 )
 echo.
 echo ---- 手动安装步骤 ^(中文^) ----
-echo 1. 将 efisp/ 文件夹复制到 persist 启动根目录：
+echo 1. 将 efisp/ 文件夹和 ENTRIES.CFG 复制到 persist：
 echo      cp -r efisp/. /mnt/vendor/persist/efisp/
+echo      cp ENTRIES.CFG /mnt/vendor/persist/ENTRIES.CFG
 echo    （如不存在请先创建 /mnt/vendor/persist/efisp，例如用 MT 管理器）
 echo 2. sync
 if "%GBL_OK%"=="no" (

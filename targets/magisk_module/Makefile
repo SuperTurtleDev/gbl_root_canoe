@@ -1,7 +1,7 @@
 clean:
 	rm -rf build || true
 copy_resources:
-	mkdir -p build/module
+	mkdir -p build/module/efisp/tools
 	cp -r module/* build/module/
 	[ -d ../../ablrepo ] && cp -r ../../ablrepo ./build/module/ablrepo || true
 submodule_uefi: copy_resources

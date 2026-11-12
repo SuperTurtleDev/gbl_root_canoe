@@ -161,19 +161,18 @@ current_pid() {
 # instead, so this check does not apply.
 persist_mounted() { grep -q " $PERSIST_MNT " /proc/mounts; }
 
-# Lay out the \efisp boot root from the bundled module efisp/ tree: BOOTENTRIES
-# (with its tools submenu link) plus the tools/ directory and its EFI applets.
-# Each BOOTENTRIES line is "<name>:<path relative to the \efisp boot root>"; the
-# BDS lists only entries whose file actually exists, so the backup entry stays
-# hidden until a previous boot.efi has been backed up. boot.efi / boot_backup.efi
+# Lay out the \efisp boot root from the bundled module efisp/ tree: the tools/
+# directory and its EFI applets. ENTRIES.CFG is copied separately to the volume
+# root; its lines use absolute paths on that volume. boot.efi / boot_backup.efi
 # are generated at runtime and are not part of the bundle, so they are preserved.
 place_efisp_tree_to() {
   cp -r "$MODDIR/efisp/." "$1/" >> "$LOG_FILE" 2>&1
+  cp "$MODDIR/ENTRIES.CFG" "$1/../ENTRIES.CFG" >> "$LOG_FILE" 2>&1
 }
 
 # Extract and crack the target-slot ABL, then lay out the \efisp boot root
-# (boot.efi = cracked ABL, boot_backup.efi = the previous one, BOOTENTRIES +
-# tools/ = bundled module efisp tree) and flash the BDS itself to the raw efisp
+# (boot.efi = cracked ABL, boot_backup.efi = the previous one, tools/ = bundled
+# module efisp tree) and flash the BDS itself to the raw efisp
 # partition. The ABL loaded by the real bootloader is the BDS; the BDS then
 # chains to one of these entries.
 #
@@ -281,7 +280,7 @@ gbl_exploit_present() {
 }
 
 # Flash BDS.efi raw to the efisp partition, then replace the \efisp boot root's
-# bundled tree (BOOTENTRIES + tools/) with the module efisp/ bundle. No ABL is
+# bundled tools/ tree with the module efisp/ bundle. No ABL is
 # cracked and no slot copy happens; the runtime-generated boot.efi /
 # boot_backup.efi are not in the bundle, so the merge copy preserves them.
 #
@@ -321,7 +320,7 @@ update_bds_tools() {
   sync
   write_log "$TEXT_EFISP_FLASH_OK"
 
-  # 2. Replace the boot-root tree (BOOTENTRIES + tools/) with the bundled one.
+  # 2. Replace the bundled tools and update the volume-root ENTRIES.CFG.
   place_efisp_tree_to "$EFISP_DIR"
   sync
   write_log "$TEXT_EFISP_FILES_OK"
