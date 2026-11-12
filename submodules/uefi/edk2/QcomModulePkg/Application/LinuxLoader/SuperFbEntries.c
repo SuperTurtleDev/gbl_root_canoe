@@ -16,6 +16,7 @@
 #include <Library/MemoryAllocationLib.h>
 #include <Library/PrintLib.h>
 #include <Library/SfbConfigStore.h>
+#include <Library/SfbSecurity.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Guid/FileInfo.h>
@@ -583,7 +584,10 @@ SfbAsciiRelPathToUnicode (IN CONST CHAR8 *Rel, OUT CHAR16 *Out, IN UINTN OutChar
 /* ---- launching ---------------------------------------------------------- */
 
 /*
- * will migrate to SfbSecurity later
+ * The SECURITY / SECURITY2 hooks delegate to the SFB security policy: an
+ * image is admitted when it verifies under a SECURITY\BOOT_CERTS key, and
+ * without class B certificates (or with privilege granted this boot) every
+ * image is admitted.
  */
 STATIC EFI_SECURITY_ARCH_PROTOCOL          *mSfbSec      = NULL;
 STATIC EFI_SECURITY2_ARCH_PROTOCOL         *mSfbSec2     = NULL;
@@ -605,9 +609,21 @@ SfbAllowAuth (IN CONST EFI_SECURITY2_ARCH_PROTOCOL *This,
               IN CONST EFI_DEVICE_PATH_PROTOCOL    *DevicePath,
               IN VOID                              *FileBuffer,
               IN UINTN                             FileSize,
-              IN BOOLEAN                           BootPolicy) //tobe replaced by real cert verify
+              IN BOOLEAN                           BootPolicy)
 {
-  return EFI_SUCCESS;
+  EFI_STATUS  Status;
+
+  if (FileBuffer == NULL || FileSize == 0) {
+    /* Nothing to verify; let the firmware's own policy decide. */
+    return EFI_SUCCESS;
+  }
+
+  Status = SfbSecurityVerifyImage (FileBuffer, FileSize);
+  if (Status == EFI_UNSUPPORTED) {
+    /* Unsigned image while verification is on. */
+    return EFI_ACCESS_DENIED;
+  }
+  return Status;
 }
 
 STATIC

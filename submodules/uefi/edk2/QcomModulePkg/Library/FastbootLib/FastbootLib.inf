@@ -110,6 +110,8 @@
   StackCanary
   DebugLib
   CompilerIntrinsicsLib
+  # Security gating for flash/erase/boot and the sb_challenge flow.
+  SfbSecurityLib
 
 [Protocols]
   gEfiSimpleTextInProtocolGuid

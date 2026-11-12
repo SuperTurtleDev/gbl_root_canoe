@@ -37,10 +37,57 @@ DEFAULT_ENTRIES = (
 
 
 def short_name(name):
+    """The 8.3 short name: the name itself when it fits, else an AUTH_C~1
+    style alias (carried alongside LFN entries)."""
     base, _, ext = name.upper().partition(".")
-    if not (1 <= len(base) <= 8 and len(ext) <= 3):
-        raise ValueError("not an 8.3 name: %s" % name)
-    return (base.ljust(8) + ext.ljust(3)).encode("ascii")
+    base = "".join(c for c in base if c not in ' ."*+,/:;<=>?\\[]|')
+    ext = "".join(c for c in ext if c not in ' ."*+,/:;<=>?\\[]|')
+    if 1 <= len(base) <= 8 and len(ext) <= 3:
+        return (base.ljust(8) + ext.ljust(3)).encode("ascii")
+    stub, alias, n = base[:6], None, 1
+    while alias is None:
+        cand = "%s~%d" % (stub, n)
+        if len(cand) <= 8:
+            alias = (cand.ljust(8) + ext[:3].ljust(3)).encode("ascii")
+        else:
+            stub, n = stub[:-1], n
+    return alias
+
+
+def _lfn_checksum(short):
+    s = 0
+    for b in short:
+        s = (((s & 1) << 7) + (s >> 1) + b) & 0xFF
+    return s
+
+
+def lfn_entries(name, short):
+    """Long-file-name directory entries for name (VFAT LFN, UCS-2).
+
+    Layout per the FAT specification: ordinal at 0, chars 1-5 at 1-10,
+    attribute 0x0F at 11, type 0 at 12, short-name checksum at 13, chars
+    6-11 at 14-25, cluster 0 at 26-27, chars 12-13 at 28-31. The last
+    logical entry carries the 0x40 flag and the name is null-terminated
+    then padded with 0xFFFF.
+    """
+    ucs = name.upper().encode("utf-16-le") + b"\x00\x00"
+    ucs += b"\xff\xff" * ((-len(ucs) // 2) % 13)
+    n = len(ucs) // 26
+    ck = _lfn_checksum(short)
+    out = b""
+    for i in range(n, 0, -1):
+        chunk = ucs[(i - 1) * 26:i * 26]
+        e = bytearray(32)
+        e[0] = i | (0x40 if i == n else 0)
+        e[1:11] = chunk[0:10]
+        e[11] = 0x0F
+        e[12] = 0
+        e[13] = ck
+        e[14:26] = chunk[10:22]
+        e[26:28] = b"\x00\x00"
+        e[28:32] = chunk[22:26]
+        out += bytes(e)
+    return out
 
 
 class FatWriter:
@@ -115,17 +162,29 @@ class FatWriter:
                 entries.append(self.label + bytes([0x08]) + b"\0" * 20)
             for name in sorted(node):
                 child = node[name]
+                sn = short_name(name)
+                upper = name.upper()
+                plain = sn == ((upper.partition(".")[0].ljust(8) +
+                                upper.partition(".")[2].ljust(3)).encode("ascii"))
+                lfn = b"" if plain else lfn_entries(name, sn)
                 if isinstance(child, dict):
-                    size = (len(child) + 2) * 32
+                    # Room for ".": ".." plus every child's short entry and
+                    # any LFN entries (all multiples of 32 bytes).
+                    size = (2 + sum(
+                        1 + (0 if short_name(n) == (
+                            n.upper().partition(".")[0].ljust(8) +
+                            n.upper().partition(".")[2].ljust(3)).encode("ascii")
+                        else len(lfn_entries(n, short_name(n))) // 32)
+                        for n in child)) * 32
                     cl = alloc(size)
                     sub_parent = 0 if self_cluster is None else self_cluster
                     write_dir(child, cl, sub_parent, None)
-                    entries.append(entry(short_name(name), 0x10, cl, 0))
+                    entries.append(lfn + entry(sn, 0x10, cl, 0))
                 else:
                     cl = alloc(len(child)) if child else 0
                     if child:
                         img[coff(cl):coff(cl) + len(child)] = child
-                    entries.append(entry(short_name(name), 0x20, cl, len(child)))
+                    entries.append(lfn + entry(sn, 0x20, cl, len(child)))
             blob = b"".join(entries)
             if area is None:
                 area = coff(self_cluster)
@@ -306,7 +365,7 @@ def gpt_disk(total_sectors, parts):
     return bytes(img)
 
 
-def build(bds, app, entries_text):
+def build(bds, app, entries_text, container_files=None):
     if len(bds) >= BDS_RESERVED:
         raise ValueError("BDS.efi is %d bytes; it must be below 1 MiB" % len(bds))
 
@@ -321,10 +380,21 @@ def build(bds, app, entries_text):
         efiboot.add("EFI\\TOOLS\\HELLO.EFI", app)
         efiboot.add("EFI\\TOOLS\\HELLO2.EFI", app)
 
+    # efisp = 1 MiB BDS image + the 2 MiB config container. Without
+    # container_files the container area stays blank and the BDS formats it
+    # on first boot; with them the container is built here (FAT12, matching
+    # SfbFatPlan for 4096 sectors) so tests can ship AUTH_CERTS/BOOT_CERTS.
+    efisp_data = bds
+    if container_files:
+        container = FatWriter(2 * MIB // SECTOR, 12, 1, "SFBCONFIG")
+        for path, data in container_files:
+            container.add(path, data)
+        efisp_data = bds.ljust(BDS_RESERVED, b"\0") + container.build()
+
     first = 2048
     layout = []
     for name, ptype, size, data in (("esp", ESP_TYPE, 8 * MIB, esp.build()),
-                                    ("efisp", BASIC_DATA_TYPE, 3 * MIB, bds),
+                                    ("efisp", BASIC_DATA_TYPE, 3 * MIB, efisp_data),
                                     ("efiboot", BASIC_DATA_TYPE, 40 * MIB, efiboot.build())):
         count = size // SECTOR
         layout.append((name, ptype, first, first + count - 1, data))

@@ -34,6 +34,7 @@
 #include <Library/PartitionTableUpdate.h>
 #include <Library/PrintLib.h>
 #include <Library/SfbConfigStore.h>
+#include <Library/SfbSecurity.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Protocol/BlockIo.h>
@@ -1130,12 +1131,21 @@ SfbRunAdvancedMenu (VOID)
     L"Boot Entries Priority >",
     L"Boot Entries Management >"
   };
+  CONST CHAR16 *LockHint =
+    L"Device locked: only fastboot authorization is available here.";
   INTN Chosen;
+  UINTN RowCount;
+
+  /* Locked mode exposes only the fastboot authorization interface; the rest
+   * of the menu returns after a successful challenge response this boot. */
+  RowCount = SfbSecurityLocked () ? 1 : ARRAY_SIZE (Rows);
 
   SfbShowEnteringScreen (L"Advanced");
 
   while (TRUE) {
-    Chosen = SfbAdvChoose (L"Advanced", NULL, Rows, ARRAY_SIZE (Rows), 0);
+    Chosen = SfbAdvChoose (L"Advanced",
+                           RowCount == 1 ? LockHint : NULL,
+                           Rows, RowCount, 0);
     switch (Chosen) {
     case 0:
       /* The caller announces fastboot mode and runs its loop. */

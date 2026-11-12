@@ -109,3 +109,19 @@ The boot menu also rescans and stores whenever it opens.
 A deleted entry whose file a volume still offers comes back the next time a
 scan runs. That happens after an empty list, on the menu key, or when the menu
 opens. To remove it for good, remove the file or its `ENTRIES.CFG` line.
+
+## Security certificates
+
+The container also holds the security certificate classes, as X.509 DER
+(`.cer`) files classified by directory:
+
+| Directory | Class | Effect when non-empty |
+| --- | --- | --- |
+| `AUTH_CERTS` | A - fastboot authorization | Locked mode until a challenge response verifies |
+| `BOOT_CERTS` | B - EFI code signing | Every launched EFI must carry a verifiable signature |
+
+Both features are purely certificate-driven: an empty (or missing) directory
+means the feature is off and BDS behaves exactly as before. See
+[sfb-security.md](sfb-security.md) for the full model - the challenge
+protocol, the fastboot command gating and the signing tools under
+`tools/sfbsec/` in the top-level repository.

@@ -91,6 +91,7 @@
 	ArmPlatformPkg/ArmPlatformPkg.dec
 	MdeModulePkg/MdeModulePkg.dec
 	QcomModulePkg/QcomModulePkg.dec
+	CryptoPkg/CryptoPkg.dec
 	FatPkg/FatPkg.dec
 	Ext4Pkg/Ext4Pkg.dec
 
@@ -119,6 +120,8 @@
 	Ext4DxeLib
 	# FAT config container in the efisp partition after the BDS image.
 	SfbConfigStoreLib
+	# Security policy: certs, challenge auth, image verification.
+	SfbSecurityLib
 
 [LibraryClasses.AARCH64]
 

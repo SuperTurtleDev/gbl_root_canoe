@@ -79,6 +79,7 @@
 #include <Protocol/SimpleTextIn.h>
 #include "SuperFbMenu.h"
 #include <Library/SfbConfigStore.h>
+#include <Library/SfbSecurity.h>
 
 #define MAX_APP_STR_LEN 64
 #define MAX_NUM_FS 10
@@ -248,6 +249,18 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
     Status = SfbConfigStoreMount ();
     if (EFI_ERROR (Status)) {
       DEBUG ((EFI_D_ERROR, "Booting without a config store: %r\n", Status));
+    }
+
+    /*
+     * Pull the certificate classes into memory while the container is
+     * mounted: fastboot runs with the store unmounted, so the auth and
+     * boot cert pools must be resident before any of that happens. The
+     * device starts unprivileged; with no AUTH_CERTS there is nothing to
+     * authorize against, so entering the menu grants privilege directly.
+     */
+    SfbSecurityLoadCerts ();
+    if (!SfbSecurityAuthEnabled ()) {
+      SfbSecurityGrantPrivilege ();
     }
 
     /*

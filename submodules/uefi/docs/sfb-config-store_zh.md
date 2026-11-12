@@ -74,3 +74,14 @@ Android Tools\Reboot Tools:\efisp\tools\RebootTools.efi
 - **USB Mass Storage > Export Config Store**：卸载容器，并在其外层合成一份 GPT，唯一的 ESP 类型分区恰好覆盖容器，宿主机看到的是普通 FAT 分区。导出结束后重新挂载，并重新读取存储列表，以防宿主机修改过它。
 
 被删除的项如果其文件仍在某个卷上，下次扫描时会被重新加入。扫描发生在列表为空、按下菜单键或打开菜单时。要彻底去掉它，请删除该文件或对应的 `ENTRIES.CFG` 行。
+
+## 安全证书
+
+容器中还存放安全证书类，以 X.509 DER（`.cer`）文件、按目录分类：
+
+| 目录 | 类别 | 非空时的效果 |
+| --- | --- | --- |
+| `AUTH_CERTS` | A 类 —— fastboot 授权 | 进入锁定模式，直到挑战应答验证通过 |
+| `BOOT_CERTS` | B 类 —— EFI 代码签名 | 所有被启动的 EFI 必须带可验证的签名 |
+
+两个功能完全由证书驱动：目录为空（或不存在）即关闭该功能，BDS 行为与之前完全一致。完整模型（挑战协议、fastboot 命令门控、顶层仓库 `tools/sfbsec/` 下的签名工具）见 [sfb-security.md](sfb-security.md)。

@@ -18,12 +18,16 @@
 
 [Includes]
   Include
+  # mbedtls headers, consumed by the mbedtls-based BaseCryptLib and by the
+  # SFB security library in QcomModulePkg.
+  Library/MbedTlsLib/Include
+  Library/MbedTlsLib/mbedtls/include
 
 [Includes.Common.Private]
   Private
   Library/Include
-  Library/OpensslLib/openssl/include
-  Library/OpensslLib/openssl/crypto/include
+  Library/MbedTlsLib/mbedtls/include/mbedtls
+  Library/MbedTlsLib/mbedtls/library
 
 [LibraryClasses]
   ##  @libraryclass  Provides basic library functions for cryptographic primitives.

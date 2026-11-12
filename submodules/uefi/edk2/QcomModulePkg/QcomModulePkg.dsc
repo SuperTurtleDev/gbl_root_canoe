@@ -100,8 +100,17 @@
   Ext4DxeLib|Ext4Pkg/Ext4Dxe/Ext4DxeLib.inf
   # Boot menu config store: the FAT container in efisp after the BDS image.
   SfbConfigStoreLib|QcomModulePkg/Library/SfbConfigStoreLib/SfbConfigStoreLib.inf
+  # Security policy: SECURITY certs in the container, fastboot challenge
+  # authorization and PE image signature verification.
+  SfbSecurityLib|QcomModulePkg/Library/SfbSecurityLib/SfbSecurityLib.inf
   OrderedCollectionLib|MdePkg/Library/BaseOrderedCollectionRedBlackTreeLib/BaseOrderedCollectionRedBlackTreeLib.inf
   TimeBaseLib|EmbeddedPkg/Library/TimeBaseLib/TimeBaseLib.inf
+  # Security-boot crypto: mbedtls-backed BaseCryptLib (X.509 parse, RSA/ECDSA
+  # verify, SHA-256, PKCS#7). Trimmed mbedtls config keeps BDS under 1 MiB.
+  MbedTlsLib|CryptoPkg/Library/MbedTlsLib/MbedTlsLib.inf
+  BaseCryptLib|CryptoPkg/Library/BaseCryptLibMbedTls/BaseCryptLib.inf
+  RngLib|MdePkg/Library/BaseRngLibNull/BaseRngLibNull.inf
+  SynchronizationLib|MdePkg/Library/BaseSynchronizationLib/BaseSynchronizationLib.inf
 
 
 [LibraryClasses.ARM]

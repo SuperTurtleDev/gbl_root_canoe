@@ -50,3 +50,26 @@ print(m.FatReader(open('container.img','rb').read()).read('CONFIG\\\\ENTRIES.CFG
 | D5 | Advanced > USB Mass Storage > Export Config Store, read-write | Host sees a GPT disk with one ESP partition named `efisp`, FAT label `SFBCONFIG`, holding `CONFIG\ENTRIES.CFG`. Edits made on the host are used after the session ends. |
 | D6 | Same export, read-only | Host can read; writes do not reach the device. |
 | D7 | Volume Up at power-on | Menu opens after a rescan; `(d,p)` names match the UFS LUN and GPT entry numbers. |
+
+## Security (certificates, lock, EFI verification)
+
+Fastboot USB cannot run under QEMU (the fastboot stack needs the Qualcomm USB
+device controller), so the challenge flow is real-device only. S1-S6 are
+automated by `python3 tests/sfb/qemu_security_test.py` (headless QEMU with
+the in-tree firmware and monitor-driven key injection); they cover the
+certificate-driven matrix. `tests/sfb/security_roundtrip.py` covers the
+crypto on the host.
+
+| # | Step | Expected |
+| --- | --- | --- |
+| S1 | QEMU, no `AUTH_CERTS`/`BOOT_CERTS` (or absent) | Behavior identical to before: full Advanced menu, any EFI app boots. |
+| S2 | QEMU, `BOOT_CERTS` holds `boot.cer`, efiboot app unsigned | Entry refused; log shows `SFB-SEC: image carries no signature` / `rejected`. |
+| S3 | QEMU, same, app signed with `tools/sfbsec/sign_efi.py` | App boots. |
+| S4 | QEMU, `AUTH_CERTS` holds `auth.cer` | Advanced shows only `Enter Fastboot` with the lock hint. |
+| S5 | QEMU, `AUTH_CERTS` + `BOOT_CERTS` present, unsigned app | Same as S2: verification still active at boot, independent of the auth lock. |
+| S6 | QEMU, only `BOOT_CERTS`, signed app, open menu > Advanced | Full Advanced rows (privilege granted directly with no AUTH_CERTS), no lock hint; signed app boots. |
+| R1 | Real device, `AUTH_CERTS` present, `fastboot flash boot ...` | `FAIL sb-locked`; only challenge commands work. |
+| R2 | Real device, `tools/sfbsec/fastboot_unlock.sh auth.key` | `OKAY Unlocked`; full fastboot for this boot; reboot re-locks. |
+| R3 | Real device, replay the same `sb_challenge.sig` again | `FAIL` - nonce consumed after the first attempt. |
+| R4 | Real device, sign with a foreign key | `FAIL Challenge rejected`; still locked. |
+| R5 | Real device, unlock then boot an unsigned EFI with `BOOT_CERTS` present | Refused - privilege and verification are independent. |

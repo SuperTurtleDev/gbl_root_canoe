@@ -296,5 +296,22 @@ class QemuImageTest(unittest.TestCase):
             self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
 
 
+class SecurityRoundTripTest(unittest.TestCase):
+    """Challenge-response and PE signature verification against openssl-made
+    key material, running the real SfbSecurityLib + mbedtls code on the host.
+    """
+
+    def test_roundtrip(self):
+        with tempfile.TemporaryDirectory(prefix="sfb-sec-") as art:
+            env = dict(os.environ, SFB_TEST_DIR=art)
+            out = subprocess.run(
+                [sys.executable,
+                 os.path.join(HERE, "security_roundtrip.py")],
+                capture_output=True, text=True, env=env)
+            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertIn("PASS challenge: valid signature accepted", out.stdout)
+            self.assertIn("PASS image: correctly signed image passes", out.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,38 @@
+## @file
+#  Security state for the super-fastboot BDS: certificate loading, fastboot
+#  challenge-response authorization and PE image signature verification.
+#
+#  Copyright (c) 2026, contributors to the canoe ABL tree.
+#  SPDX-License-Identifier: BSD-3-Clause
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = SfbSecurityLib
+  FILE_GUID                      = 8E2F5B04-71D3-4C6E-9A15-D2F0B7C8E411
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = SfbSecurityLib
+
+[Sources]
+  SfbCerts.c
+  SfbSecurity.c
+  SfbPeVerify.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  CryptoPkg/CryptoPkg.dec
+  QcomModulePkg/QcomModulePkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  MemoryAllocationLib
+  UefiBootServicesTableLib
+  SfbConfigStoreLib
+  MbedTlsLib
+  UefiLib
+
+[Protocols]
+  gEfiRngProtocolGuid

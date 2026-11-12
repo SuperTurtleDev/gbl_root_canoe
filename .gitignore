@@ -34,3 +34,6 @@ extracted/
 submodules/uefi/edk2/build_modulepkg.log
 
 submodules/unsigned_abl.elf
+
+# ZCode session data (plans, task state)
+.zcode/
