@@ -129,4 +129,14 @@ SfbSecurityVerifyImage (
   IN UINTN       PeSize
   );
 
+/*
+ * Publish SFB_SECURE_BOOT_PROTOCOL (Include/Protocol/SfbSecureBoot.h) on a
+ * new handle so launched applications can query IsVerifiedBoot / IsPrivMode.
+ * Call once after SfbSecurityLoadCerts; idempotent.
+ */
+EFI_STATUS
+SfbSecurityInstallProtocol (
+  VOID
+  );
+
 #endif /* __SFB_SECURITY_H__ */

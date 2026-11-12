@@ -112,3 +112,32 @@ off again on the next boot.
   a real-device test (R1-R5).
 - There are deliberately no test hooks in the production image; the
   certificate-driven switches are the test seams.
+
+## SFB_SECURE_BOOT_PROTOCOL (for EFI applications)
+
+The BDS publishes `SFB_SECURE_BOOT_PROTOCOL`
+(`QcomModulePkg/Include/Protocol/SfbSecureBoot.h`, GUID
+`2e7c4a19-d5b0-4c67-9a31-860f4d2b71e3`) on its own handle once the
+certificate classes are loaded, before any entry launches. Any application
+can locate it:
+
+```c
+#include <Protocol/SfbSecureBoot.h>
+
+SFB_SECURE_BOOT_PROTOCOL *Sb;
+if (!EFI_ERROR (gBS->LocateProtocol (&gSfbSecureBootProtocolGuid, NULL,
+                                     (VOID **)&Sb))) {
+  Print (L"verified boot: %u, privileged: %u\n",
+         Sb->IsVerifiedBoot (Sb), Sb->IsPrivMode (Sb));
+}
+```
+
+- `IsVerifiedBoot()` - TRUE when BOOT_CERTS is non-empty and every launched
+  EFI image is being verified. Independent of privilege.
+- `IsPrivMode()` - TRUE when the session is privileged (no AUTH_CERTS, or a
+  successful challenge response). FALSE while locked; resets on reboot.
+
+The values are live queries against the BDS security state, so a successful
+`fastboot_unlock.sh` is reflected immediately. Add
+`gSfbSecureBootProtocolGuid` to the consuming module's `[Protocols]`
+section.

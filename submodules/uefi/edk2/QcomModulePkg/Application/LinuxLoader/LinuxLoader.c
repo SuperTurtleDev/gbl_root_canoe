@@ -262,6 +262,8 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
     if (!SfbSecurityAuthEnabled ()) {
       SfbSecurityGrantPrivilege ();
     }
+    /* Publish the status protocol for launched applications. */
+    (VOID)SfbSecurityInstallProtocol ();
 
     /*
      * Load (or build and store) the boot entries and, unless the menu was

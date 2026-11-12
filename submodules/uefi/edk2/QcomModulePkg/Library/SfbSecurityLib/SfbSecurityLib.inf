@@ -18,6 +18,7 @@
   SfbCerts.c
   SfbSecurity.c
   SfbPeVerify.c
+  SfbSecureBootProtocol.c
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -36,3 +37,4 @@
 
 [Protocols]
   gEfiRngProtocolGuid
+  gSfbSecureBootProtocolGuid

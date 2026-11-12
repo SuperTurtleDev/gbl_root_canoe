@@ -157,6 +157,7 @@
 	gEfiPartTypeSystemPartGuid
 
 [Protocols]
+	gSfbSecureBootProtocolGuid
 	gEfiSimpleTextInputExProtocolGuid
 	gEfiBlockIoProtocolGuid
 	gEfiLoadedImageProtocolGuid
