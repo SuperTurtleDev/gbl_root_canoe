@@ -32,17 +32,6 @@
 #define SFB_STORE_ENTRIES_PATH   L"\\CONFIG\\ENTRIES.CFG"
 #define SFB_STORE_TEMP_PATH      L"\\CONFIG\\ENTRIES.TMP"
 
-/*
- * Optional file, looked for in a boot entry's own directory, naming UEFI driver
- * images to load and start before that entry is launched. One path per line,
- * on the same volume, leading '\' optional; blank lines and '#' comments are
- * ignored.
- */
-#define SFB_DRIVER_LIST_NAME  L"DRIVER.LIST"
-
-/* Upper bound on a DRIVER.LIST file. */
-#define SFB_LIST_MAX_BYTES    8192
-
 #define SFB_DESC_CHARS       48
 #define SFB_MAX_DIR_ENTRIES  128
 

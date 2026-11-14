@@ -1,1 +1,22 @@
 # useful codes the project not depend on
+
+## fastboot_auth
+
+PC-side pairing and unlock tool for the SFB BDS secure fastboot. It talks to
+the phone's EFI Boot Mgr app for pairing and drives the regular fastboot
+binary for the challenge-response unlock.
+
+```
+make -C tools/fastboot_auth
+
+# pair once (the app shows the address and a six-digit code)
+fastboot_auth pair 192.168.1.23:37021
+
+# unlock the running BDS for this boot
+fastboot_auth auth [-d <serial>] [-f <path to fastboot>]
+```
+
+Needs OpenSSL headers and libcrypto. The identity (RSA-2048 key and a
+self-signed `CN=user@host` certificate) is kept in `~/.fastboot_auth`; the
+phone installs the certificate into `AUTH_CERTS`, which the BDS
+reads at boot.

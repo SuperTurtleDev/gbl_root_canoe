@@ -1614,7 +1614,7 @@ CmdFlash (IN CONST CHAR8 *arg, IN VOID *data, IN UINT32 sz)
 
   /* Virtual partition sb_challenge.sig: the authorization response. The
    * downloaded buffer must hold a raw signature over the challenge nonce,
-   * verifiable under a SECURITY\AUTH_CERTS certificate. A successful check
+   * verifiable under an AUTH_CERTS certificate. A successful check
    * unlocks the mutating commands for the rest of the boot. */
   if (StrnCmp (PartitionName, L"sb_challenge.sig",
                StrLen (L"sb_challenge.sig")) == 0) {

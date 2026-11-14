@@ -6,9 +6,9 @@ Usage: sign_efi.py <boot.cer> <boot.key> <app.efi> [output.efi]
 The signature is a PKCS#7 (no signed attributes, SHA-256, via openssl smime)
 over the byte stream the BDS authentihash covers - everything in the file
 except the COFF checksum field, the security data-directory entry and the
-certificate table itself. It is appended as a WIN_CERTIFICATE entry and the
-security directory is patched to point at it. Mirrors SfbPeVerify.c in the
-BDS.
+certificate table itself; data after the certificate table is included. It
+is appended as a WIN_CERTIFICATE entry and the security directory is patched
+to point at it. Mirrors SfbPeVerify.c in the BDS.
 """
 
 import os
@@ -41,14 +41,18 @@ def pe_layout(blob):
 def canonical_stream(blob):
     checksum_off, sec_dir_off, size_of_headers = pe_layout(blob)
     sd_off, sd_size = struct.unpack_from("<II", blob, sec_dir_off)
-    end = len(blob)
     if sd_size:
-        end = sd_off
+        if sd_off < size_of_headers or sd_off + sd_size > len(blob):
+            raise SystemExit("bad certificate table")
+        cert_start, cert_end = sd_off, sd_off + sd_size
+    else:
+        cert_start = cert_end = len(blob)
     return (blob[:checksum_off]
             + blob[checksum_off + 4:sec_dir_off]
             + b"\0" * 8
             + blob[sec_dir_off + 8:size_of_headers]
-            + blob[size_of_headers:end])
+            + blob[size_of_headers:cert_start]
+            + blob[cert_end:])
 
 
 def main():

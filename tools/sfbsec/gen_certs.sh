@@ -9,8 +9,8 @@
 #   boot.key / boot.cer   class B - EFI code signing
 #
 # Copy the .cer files into the efisp config container:
-#   SECURITY/AUTH_CERTS/*.cer   (auth)
-#   SECURITY/BOOT_CERTS/*.cer   (boot)
+#   AUTH_CERTS/*.cer   (auth)
+#   BOOT_CERTS/*.cer   (boot)
 #
 # X.509 DER (.cer), RSA 2048. The BDS parses certificates with mbedtls.
 set -e

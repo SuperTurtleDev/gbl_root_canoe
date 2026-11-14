@@ -1,0 +1,40 @@
+## @file
+#  Secure fastboot preload wrapper: blocks the console input when the boot
+#  session is not privileged, then chainloads the image named by its first
+#  LoadOptions argument.
+#
+#  Copyright (c) 2026, contributors to the canoe ABL tree.
+#  SPDX-License-Identifier: BSD-3-Clause
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = SecureFastboot
+  FILE_GUID                      = 8f2c6a41-7b3d-4e95-a1c2-5d9e0b7f3c68
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = SecureFastbootEntry
+
+[Sources]
+  SecureFastboot.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  QcomModulePkg/QcomModulePkg.dec
+  SecureFastbootPkg/SecureFastbootPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  DevicePathLib
+  MemoryAllocationLib
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  UefiLib
+
+[Protocols]
+  gEfiLoadedImageProtocolGuid
+  gEfiSimpleTextInProtocolGuid
+  gEfiSimpleTextInputExProtocolGuid
+  gSfbSecureBootProtocolGuid

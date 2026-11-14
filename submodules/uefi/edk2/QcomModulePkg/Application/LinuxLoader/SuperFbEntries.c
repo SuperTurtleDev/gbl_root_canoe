@@ -539,63 +539,11 @@ SfbWriteStoredEntries (IN CONST SFB_ENTRY_LIST *List)
   return Status;
 }
 
-/*
- * Turn a DRIVER.LIST line into an absolute Unicode path on the volume:
- * leading whitespace and separators are stripped, '/' is normalised to '\',
- * a single leading '\' is added, and trailing spaces
- * and separators are trimmed. Returns FALSE for blank lines, comments ('#') and
- * anything that reduces to nothing.
- */
-STATIC
-BOOLEAN
-SfbAsciiRelPathToUnicode (IN CONST CHAR8 *Rel, OUT CHAR16 *Out, IN UINTN OutChars)
-{
-  UINTN  Count;
-
-  while (*Rel == ' ' || *Rel == '\t') {
-    Rel++;
-  }
-  if (*Rel == '\0' || *Rel == '#') {
-    return FALSE;
-  }
-
-  /* Whether or not the line starts with a separator, exactly one is added. */
-  while (*Rel == '/' || *Rel == '\\') {
-    Rel++;
-  }
-
-  if (OutChars < 2) {
-    return FALSE;
-  }
-
-  Count = 0;
-  Out[Count++] = L'\\';
-
-  for (; *Rel != '\0' && Count + 1 < OutChars; Rel++) {
-    CHAR8  Ch = *Rel;
-
-    if (Ch == '/') {
-      Ch = '\\';
-    }
-    if ((UINT8)Ch < 0x20 || (UINT8)Ch > 0x7e) {
-      continue;
-    }
-    Out[Count++] = (CHAR16)Ch;
-  }
-
-  while (Count > 1 && (Out[Count - 1] == L' ' || Out[Count - 1] == L'\\')) {
-    Count--;
-  }
-  Out[Count] = L'\0';
-
-  return (BOOLEAN)(Count > 1);
-}
-
 /* ---- launching ---------------------------------------------------------- */
 
 /*
  * The SECURITY / SECURITY2 hooks delegate to the SFB security policy: an
- * image is admitted when it verifies under a SECURITY\BOOT_CERTS key, and
+ * image is admitted when it verifies under a BOOT_CERTS key, and
  * without class B certificates (or with privilege granted this boot) every
  * image is admitted.
  */
@@ -689,110 +637,6 @@ SfbLoadDriver (IN EFI_HANDLE Volume, IN CONST CHAR16 *Path)
   return Status;
 }
 
-/* Copy Path's parent directory into Out. A path with no directory component
- * (a file at the volume root) yields "\". */
-STATIC
-VOID
-SfbDirOf (IN CONST CHAR16 *Path, OUT CHAR16 *Out, IN UINTN OutChars)
-{
-  UINTN  Index;
-  UINTN  LastSep = 0;
-
-  StrnCpyS (Out, OutChars, Path, OutChars - 1);
-
-  for (Index = 0; Out[Index] != L'\0'; Index++) {
-    if (Out[Index] == L'\\') {
-      LastSep = Index;
-    }
-  }
-
-  if (LastSep == 0) {
-    Out[0] = L'\\';
-    Out[1] = L'\0';
-  } else {
-    Out[LastSep] = L'\0';
-  }
-}
-
-/* Append Child to a directory path, inserting a separator unless the directory
- * is the root. */
-STATIC
-VOID
-SfbJoinChild (IN OUT CHAR16 *Path, IN UINTN OutChars, IN CONST CHAR16 *Child)
-{
-  if (!(Path[0] == L'\\' && Path[1] == L'\0')) {
-    StrnCatS (Path, OutChars, L"\\", OutChars - StrLen (Path) - 1);
-  }
-  StrnCatS (Path, OutChars, Child, OutChars - StrLen (Path) - 1);
-}
-
-/*
- * Load the drivers named in the DRIVER.LIST file sitting in EntryPath's own
- * directory, if that file exists, then connect controllers so the drivers bind.
- * Each line is a driver path on the same volume. Missing list or
- * missing drivers are not fatal: the entry still launches.
- */
-STATIC
-VOID
-SfbPreloadDrivers (IN EFI_HANDLE Volume, IN CONST CHAR16 *EntryPath)
-{
-  EFI_FILE_PROTOCOL  *Root = NULL;
-  CHAR16             ListPath[SFB_PATH_CHARS];
-  CHAR8              *Buffer;
-  UINTN              Size = 0;
-  CONST CHAR8        *Cursor;
-  CHAR8              Line[SFB_PATH_CHARS];
-  BOOLEAN            LoadedAny = FALSE;
-
-  if (Volume == NULL || EntryPath == NULL) {
-    return;
-  }
-
-  SfbDirOf (EntryPath, ListPath, SFB_PATH_CHARS);
-  SfbJoinChild (ListPath, SFB_PATH_CHARS, SFB_DRIVER_LIST_NAME);
-
-  if (EFI_ERROR (SfbOpenVolumeRoot (Volume, &Root)) || Root == NULL) {
-    return;
-  }
-
-  Buffer = AllocateZeroPool (SFB_LIST_MAX_BYTES + 1);
-  if (Buffer == NULL) {
-    Root->Close (Root);
-    return;
-  }
-
-  if (EFI_ERROR (SfbReadFileBytes (Root, ListPath, Buffer, SFB_LIST_MAX_BYTES,
-                                   &Size))) {
-    /* No DRIVER.LIST beside the entry: nothing to preload. */
-    FreePool (Buffer);
-    Root->Close (Root);
-    return;
-  }
-  Buffer[Size] = '\0';
-  Root->Close (Root);
-
-  DEBUG ((EFI_D_INFO, "SFB: DRIVER.LIST '%s' for entry '%s'\n",
-          ListPath, EntryPath));
-
-  Cursor = Buffer;
-  while (SfbEntryNextLine (&Cursor, Line, sizeof (Line))) {
-    CHAR16  RelPath[SFB_PATH_CHARS];
-
-    if (!SfbAsciiRelPathToUnicode (Line, RelPath, SFB_PATH_CHARS)) {
-      continue;
-    }
-    if (!EFI_ERROR (SfbLoadDriver (Volume, RelPath))) {
-      LoadedAny = TRUE;
-    }
-  }
-
-  FreePool (Buffer);
-
-  if (LoadedAny) {
-    SfbConnectAll ();
-  }
-}
-
 EFI_STATUS
 SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
                 IN BOOLEAN              ClearScreen,
@@ -816,13 +660,6 @@ SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
    * the boot splash) untouched.
    */
   SfbShowBootingScreen (Entry->Spec.Name, ClearScreen);
-
-  /*
-   * Preload any drivers the entry asks for via a DRIVER.LIST in its directory,
-   * so a loader that needs, say, a file-system or graphics driver present finds
-   * it already bound before it starts.
-   */
-  SfbPreloadDrivers (Entry->Volume, Entry->Spec.Path);
 
   SfbLoadSecurityPolicy ();
   Status = gBS->LoadImage (FALSE, gImageHandle, Entry->DevicePath,
@@ -922,14 +759,14 @@ SfbRunStartup (IN BOOLEAN MenuRequested)
     return;
   }
 
-  /* 5. Menu requested at power-on: refresh and store, then the menu. */
+  /* 4. Menu requested at power-on: refresh and store, then the menu. */
   if (MenuRequested) {
     (VOID)SfbUpdateEntries (List, NULL);
     (VOID)SfbWriteStoredEntries (List);
     return;
   }
 
-  /* 4. Try every entry in order. A launched image that boots never comes
+  /* 5. Try every entry in order. A launched image that boots never comes
    * back; one that fails or returns hands over to the next entry. Only an
    * entry whose file is not a loadable PE/COFF image is dropped - missing
    * media, a security refusal or low memory may all be gone next boot. */

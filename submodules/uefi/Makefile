@@ -1,4 +1,4 @@
-.PHONY: clean build tools tools-clean
+.PHONY: clean build tools tools-clean securefastboot securefastboot-clean
 
 clean:
 	rm -rf edk2/Build || true
@@ -65,4 +65,31 @@ tools-clean:
   		CLANG_BIN=/usr/bin/ CLANG_PREFIX=aarch64-linux-gnu- \
   		PREBUILT_HOST_TOOLS="BUILD_CC=clang BUILD_CXX=clang++ LDPATH=-fuse-ld=lld BUILD_AR=llvm-ar"' || true
 	rm -f ./build/RebootTools.efi ./build/ArbTools.efi ./build/BLTools.efi || true
+
+# Build the standalone SecureFastbootPkg preload wrapper. It lives in the
+# config container (persist/efisp) and is chainloaded by the BDS, so it is
+# deliberately not part of the BDS image. Same toolchain env as `build`.
+securefastboot:
+	cp -r ./Conf ./edk2/ 2>/dev/null || true
+	rm -rf edk2/Build/SecureFastbootPkg
+	bash -c 'cd edk2 && . ./edksetup.sh && make securefastboot BOARD_BOOTLOADER_PRODUCT_NAME=canoe TARGET_ARCHITECTURE=AARCH64 TARGET=RELEASE \
+		CLANG_BIN=/usr/bin/ CLANG_PREFIX=aarch64-linux-gnu- VERIFIED_BOOT_ENABLED=1 \
+		VERIFIED_BOOT_LE=0 AB_RETRYCOUNT_DISABLE=0 TARGET_BOARD_TYPE_AUTO=0 \
+		BUILD_USES_RECOVERY_AS_BOOT=0 DISABLE_PARALLEL_DOWNLOAD_FLASH=0 PVMFW_BCC_ENABLED=-DPVMFW_BCC \
+		REMOVE_CARVEOUT_REGION=1 QSPA_BOOTCONFIG_ENABLE=1 USER_BUILD_VARIANT=0 TEST_ADAPTER=1 \
+		PREBUILT_HOST_TOOLS="BUILD_CC=clang BUILD_CXX=clang++ LDPATH=-fuse-ld=lld BUILD_AR=llvm-ar"' || true
+	@SRC=edk2/Build/SecureFastbootPkg/RELEASE_CLANG35/AARCH64/SecureFastboot.efi; \
+	if [ ! -f $$SRC ]; then \
+		echo "SecureFastbootPkg build failed"; \
+		exit 1; \
+	fi
+	mkdir -p ./build
+	cp edk2/Build/SecureFastbootPkg/RELEASE_CLANG35/AARCH64/SecureFastboot.efi ./build/SecureFastboot.efi
+	@echo "SecureFastboot built successfully: build/SecureFastboot.efi"
+
+securefastboot-clean:
+	bash -c 'cd edk2 && . ./edksetup.sh && make securefastboot-clean TARGET_ARCHITECTURE=AARCH64 TARGET=RELEASE \
+		CLANG_BIN=/usr/bin/ CLANG_PREFIX=aarch64-linux-gnu- \
+		PREBUILT_HOST_TOOLS="BUILD_CC=clang BUILD_CXX=clang++ LDPATH=-fuse-ld=lld BUILD_AR=llvm-ar"' || true
+	rm -f ./build/SecureFastboot.efi || true
 

@@ -343,7 +343,7 @@ ifeq "$(CLANG_NEED_EXTRA_DLINK_FLAGS)" "true"
 	export CLANG_EXTRA_DLINK_FLAGS := -Wl,--no-relax -Wl,--apply-dynamic-relocs
 endif
 
-.PHONY: all cleanall srpm tools tools-clean
+.PHONY: all cleanall srpm tools tools-clean securefastboot securefastboot-clean
 
 all: ABL_FV_ELF
 	$(call validate-cum-sign)
@@ -375,6 +375,26 @@ tools-clean:
 	@. ./edksetup.sh BaseTools && \
 	build -p $(ANDROID_TOOLS_DSC) -a $(ARCHITECTURE) -t $(TARGET_TOOLS) -b $(TARGET) -j build_androidtools.log cleanall
 	rm -rf $(WORKSPACE)/AndroidToolsPkg/Bin64
+
+# Standalone SecureFastbootPkg preload wrapper. Built from its own DSC so it
+# never collides with the main QcomModulePkg output tree; it is launched from
+# the config container, not linked into the BDS FV.
+SECURE_FASTBOOT_DSC := $(WORKSPACE)/SecureFastbootPkg/SecureFastbootPkg.dsc
+SECURE_FASTBOOT_OUT := Build/SecureFastbootPkg/$(TARGET)_$(TARGET_TOOLS)/$(ARCHITECTURE)
+
+securefastboot: $(EDK_TOOLS_PATH_MARK_FILE)
+	@. ./edksetup.sh BaseTools && \
+	build -p $(SECURE_FASTBOOT_DSC) \
+	-a $(ARCHITECTURE) \
+	-t $(TARGET_TOOLS) \
+	-b $(TARGET) \
+	-j build_securefastboot.log
+	@echo "SecureFastbootPkg built: $(SECURE_FASTBOOT_OUT)"
+
+securefastboot-clean:
+	@. ./edksetup.sh BaseTools && \
+	build -p $(SECURE_FASTBOOT_DSC) -a $(ARCHITECTURE) -t $(TARGET_TOOLS) -b $(TARGET) -j build_securefastboot.log cleanall
+	rm -rf $(WORKSPACE)/SecureFastbootPkg/Bin64
 
 $(EDK_TOOLS_PATH_MARK_FILE): $(EDK_TOOLS_SRC_FILE)
 	@$(call edk_tools_generate)

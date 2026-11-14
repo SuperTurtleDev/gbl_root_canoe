@@ -1,6 +1,6 @@
 /*
  * Certificate loading for the SFB security policy: X.509 DER files under
- * SECURITY\AUTH_CERTS and SECURITY\BOOT_CERTS in the config container.
+ * AUTH_CERTS and BOOT_CERTS in the config container.
  *
  * Copyright (c) 2026, contributors to the canoe ABL tree.
  * SPDX-License-Identifier: BSD-3-Clause

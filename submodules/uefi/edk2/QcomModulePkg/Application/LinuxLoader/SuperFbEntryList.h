@@ -9,11 +9,14 @@
  *   Android Tools\Reboot Tools:\efisp\tools\RebootTools.efi
  *
  * '\' in the name nests the entry in menus ("Android Tools" > "Reboot
- * Tools"). (d,p) names the p-th partition of the d-th whole disk the firmware
- * enumerates, both 0-based; without it the path is on the volume that holds
- * the ENTRIES.CFG being read. '/' is accepted for '\' in the path. Anything
- * after the first blank following the path is passed to the image as its
- * LoadOptions. Blank lines and lines starting with '#' are ignored.
+ * Tools"). A name component starting with '$' marks a hidden entry: it stays
+ * a normal entry in the boot order and is launched like any other, but the
+ * boot menu does not list it. (d,p) names the p-th partition of the d-th
+ * whole disk the firmware enumerates, both 0-based; without it the path is on
+ * the volume that holds the ENTRIES.CFG being read. '/' is accepted for '\'
+ * in the path. Anything after the first blank following the path is passed to
+ * the image as its LoadOptions. Blank lines and lines starting with '#' are
+ * ignored.
  *
  * Nothing in this file touches firmware services, so it builds on the host
  * for the unit tests.
@@ -38,6 +41,13 @@
 #define SFB_ENTRY_LINE_BYTES   (SFB_NAME_CHARS + SFB_PATH_CHARS + SFB_ARGS_CHARS + 32)
 
 #define SFB_NO_INDEX           ((UINTN)-1)
+
+/*
+ * A name component that begins with this character marks a hidden entry: it
+ * remains a normal boot entry in the boot order, but the boot menu does not
+ * show it.
+ */
+#define SFB_HIDDEN_PREFIX      L'$'
 
 /* What a line says, independent of what the firmware currently sees. */
 typedef struct {
@@ -202,6 +212,16 @@ SfbEntryNameChild (
   OUT CHAR16        *Child,
   IN  UINTN         ChildChars,
   OUT BOOLEAN       *IsFolder
+  );
+
+/*
+ * TRUE when Name holds a hidden entry: some '\'-separated component starts
+ * with SFB_HIDDEN_PREFIX. Hidden entries are still launched as normal boot
+ * entries; only the boot menu omits them.
+ */
+BOOLEAN
+SfbEntryNameHidden (
+  IN CONST CHAR16  *Name
   );
 
 #endif /* __SUPER_FB_ENTRY_LIST_H__ */

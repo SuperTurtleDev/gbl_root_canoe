@@ -56,7 +56,33 @@ EFI RNG protocol when available, otherwise from timer/performance-counter
 mixing; it is zeroed after every attempt, so a captured challenge cannot be
 replayed and the same nonce cannot be signed twice.
 
-Helper: `tools/sfbsec/fastboot_unlock.sh <auth.key>` runs the whole flow.
+### Pairing a computer
+
+Certificates are installed by pairing instead of being copied by hand. The
+phone app (Settings > Secure fastboot > Pair a computer) shows its address
+and a six-digit code; on the computer run:
+
+```
+fastboot_auth pair 192.168.1.23:37021
+Pairing code: 123456
+```
+
+The computer keeps a self-signed certificate `CN=user@host` in
+`~/.fastboot_auth` (`key.pem`, `cert.pem`). It sends the certificate to the
+phone, which answers with a challenge; only a signature over that challenge
+with the certificate's private key installs it into
+`AUTH_CERTS`. The BDS reads that directory at boot, so reboot once
+after pairing. Unlock a booted BDS with:
+
+```
+fastboot_auth auth [-d <serial>] [-f <path to fastboot>]
+```
+
+which runs `fetch sb_challenge`, signs the nonce with the stored key and
+flashes `sb_challenge.sig`. `-d` passes a device serial to the fastboot
+commands (`-s`), `-f` selects the fastboot binary (default: `fastboot` in
+PATH). `tools/fastboot_auth` is a small C program built on OpenSSL:
+`make -C tools/fastboot_auth`.
 
 ## Class B: EFI image verification
 
@@ -98,9 +124,10 @@ off again on the next boot.
 
 Verification is on a real device: there are deliberately no test hooks in
 the production image, and the certificate-driven switches are the test
-seams. Add/remove `.cer` files to switch each class on and off, run
-`tools/sfbsec/fastboot_unlock.sh <auth.key>` for the challenge flow, and
-boot signed/unsigned EFI apps to check BOOT_CERTS enforcement.
+seams. Add/remove `.cer` files to switch each class on and off, pair a
+computer with `fastboot_auth pair <ip:port>` and run
+`fastboot_auth auth` for the challenge flow, and boot signed/unsigned EFI
+apps to check BOOT_CERTS enforcement.
 
 ## SFB_SECURE_BOOT_PROTOCOL (for EFI applications)
 
@@ -127,6 +154,6 @@ if (!EFI_ERROR (gBS->LocateProtocol (&gSfbSecureBootProtocolGuid, NULL,
   successful challenge response). FALSE while locked; resets on reboot.
 
 The values are live queries against the BDS security state, so a successful
-`fastboot_unlock.sh` is reflected immediately. Add
+`fastboot_auth auth` is reflected immediately. Add
 `gSfbSecureBootProtocolGuid` to the consuming module's `[Protocols]`
 section.

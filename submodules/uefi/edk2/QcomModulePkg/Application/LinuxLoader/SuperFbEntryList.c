@@ -565,3 +565,19 @@ SfbEntryNameChild (
   *IsFolder = (BOOLEAN)(*Name == L'\\');
   return TRUE;
 }
+
+BOOLEAN
+SfbEntryNameHidden (
+  IN CONST CHAR16  *Name
+  )
+{
+  UINTN  Index;
+
+  for (Index = 0; Name[Index] != L'\0'; Index++) {
+    if ((Index == 0 || Name[Index - 1] == L'\\') &&
+        Name[Index] == SFB_HIDDEN_PREFIX) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}

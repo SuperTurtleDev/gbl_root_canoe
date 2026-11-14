@@ -53,11 +53,19 @@ Android Tools\Reboot Tools:\efisp\tools\RebootTools.efi
 - Without `(d,p)` the path is on the volume that holds the ENTRIES.CFG being
   read.
 - `/` is accepted in place of `\` in the path.
+- A name component starting with `$` marks a hidden entry. It is still a
+  normal boot entry: it keeps its place in the boot order and is loaded and
+  started exactly like any other entry, arguments included - only the boot
+  menu does not list it. A driver image returns from StartImage and the next
+  entry runs; an application runs at its position. It is verified like any
+  other image when BOOT_CERTS is in use, and a failure follows the normal
+  rules (a non-PE image is dropped, anything else keeps the entry and moves
+  on). Priority and Management still list it.
 - Anything after the first blank following the path is passed to the image as
   its LoadOptions.
 - Blank lines and lines starting with `#` are ignored.
-- The old `$` and `%` markers, `SFB1|...` records and volume-label matching are
-  gone.
+- The old `$`/`%` line markers, `SFB1|...` records and volume-label matching
+  are gone; `$` now only marks a boot entry the boot menu hides.
 
 ### Where entries come from
 
@@ -87,10 +95,11 @@ place and flushes again.
 3. If it is still empty, show the boot menu.
 4. If the menu key (Volume Up) was pressed, scan, sync and store, then show
    the menu.
-5. Otherwise try every entry in order. When LoadImage rejects a file as not a
-   PE/COFF image, or as built for another architecture, that entry is deleted
-   and the list is stored again. Missing files, security refusals, low memory
-   and other errors keep the entry, and BDS moves on to the next one.
+5. Otherwise try every entry in order - hidden `$` entries included, at their
+   position. When LoadImage rejects a file as not a PE/COFF image, or as
+   built for another architecture, that entry is deleted and the list is
+   stored again. Missing files, security refusals, low memory and other
+   errors keep the entry, and BDS moves on to the next one.
 6. If every entry fails, show the boot menu.
 
 The boot menu also rescans and stores whenever it opens.
@@ -98,9 +107,10 @@ The boot menu also rescans and stores whenever it opens.
 ### Advanced menu
 
 - **Boot Entries Priority**: pick an entry, move it with Volume Up and Volume
-  Down, and confirm with Power. The new order is stored.
+  Down, and confirm with Power. The new order is stored. Hidden entries are
+  listed here like any other entry.
 - **Boot Entries Management**: pick an entry and confirm to delete it. The
-  list is stored.
+  list is stored. Hidden entries are listed and can be deleted normally.
 - **USB Mass Storage > Export Config Store**: the container is unmounted and
   exported behind a synthesized GPT, with one ESP-typed partition covering it,
   so the host sees an ordinary FAT partition. It is mounted again afterwards,

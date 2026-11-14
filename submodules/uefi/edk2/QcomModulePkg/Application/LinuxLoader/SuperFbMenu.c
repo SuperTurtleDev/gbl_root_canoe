@@ -360,6 +360,12 @@ SfbBuildRows (IN CONST SFB_ENTRY_LIST *List,
   BOOLEAN  Seen;
 
   for (Index = 0; Index < List->Count; Index++) {
+    /* Hidden entries are still normal boot entries in the boot order; only
+     * the boot menu leaves them out (and a folder holding just hidden
+     * descendants disappears with them). */
+    if (SfbEntryNameHidden (List->Entry[Index].Spec.Name)) {
+      continue;
+    }
     if (!SfbEntryNameChild (List->Entry[Index].Spec.Name, Prefix, Child,
                             ARRAY_SIZE (Child), &IsFolder)) {
       continue;

@@ -1,0 +1,14 @@
+#/** @file
+#  SecureFastbootPkg - the secure fastboot preload wrapper launched from the
+#  super-fastboot config container. Standalone: it only uses standard EDK2
+#  base classes plus the SFB secure-boot protocol published by the BDS.
+#
+#  Copyright (c) 2026, contributors to the canoe ABL tree.
+#  SPDX-License-Identifier: BSD-3-Clause
+#**/
+
+[Defines]
+  PACKAGE_NAME                   = SecureFastbootPkg
+  PACKAGE_GUID                   = 5B0E3D77-9C41-4A2E-8F63-1D7A2C90E4B8
+  PACKAGE_VERSION                = 0.1
+  DEC_SPECIFICATION              = 0x00010005
