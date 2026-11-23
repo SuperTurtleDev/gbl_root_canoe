@@ -1,0 +1,204 @@
+<resources>
+    <string name="app_name">EFI Boot Mgr</string>
+
+    <!-- Boot / status -->
+    <string name="checking">Checking…</string>
+    <string name="need_root">Root access required. Grant su to EFI Boot Mgr in Magisk / KernelSU / APatch, then reopen the app.</string>
+    <string name="ready_initialized">Ready (initialized)</string>
+    <string name="busy_save">Saving…</string>
+    <string name="busy_download">Downloading vulnerable ABL…</string>
+    <string name="busy_repo">No vulnerable ABL found in repo</string>
+
+    <!-- First run -->
+    <string name="confirm_model_title">Confirm device and file</string>
+    <string name="confirm_model_body">Confirm your SoC is 8e5 / 8gen5 and you can provide an old vulnerable abl. It is NOT the current firmware ABL - it must match your device or be community-verified, otherwise you may hard-brick.</string>
+    <string name="confirm_pick">Confirmed, pick file</string>
+
+    <!-- System component update on every normal start -->
+    <string name="sys_efi_bds">BDS core</string>
+    <string name="sys_efi_wrapper">Secure fastboot EFI</string>
+    <string name="sys_efi_entries">system boot entries</string>
+    <string name="sys_update_title">System component update</string>
+    <string name="sys_update_msg">Outdated: %1$s. Update the BDS core, the additional EFIs and the system boot entries now?</string>
+    <string name="sys_update_btn">Update</string>
+    <string name="sys_update_busy">Updating system components…</string>
+    <string name="sys_update_done">System components updated</string>
+    <string name="msg_sys_efi_written">%1$s written to persist/efisp</string>
+    <string name="msg_sys_efi_present">%1$s already present</string>
+    <string name="err_sys_efi_asset">%1$s is missing from the app assets</string>
+    <string name="log_sys_update">system components outdated: %1$s</string>
+
+    <!-- Deployment page -->
+    <string name="deploy_title">Deployment</string>
+    <string name="deploy_settings_hint">Reinstall boot.efi/BDS and, when needed, the ABL. An existing config container is kept.</string>
+    <string name="deploy_settings_entry">Re-deploy</string>
+    <string name="deploy_section_current">Current system ABL</string>
+    <string name="deploy_section_vuln">ABL with the efisp vulnerability</string>
+    <string name="deploy_pick_abl">Choose abl.elf/img</string>
+    <string name="deploy_pick_patched">Choose patched ABL (.efi)</string>
+    <string name="deploy_from_partition">Read from partition</string>
+    <string name="deploy_from_partition_label">Current slot ABL (partition)</string>
+    <string name="deploy_cloud">Download from repo</string>
+    <string name="deploy_repo_label">Downloaded from repo</string>
+    <string name="deploy_status_none">Not selected</string>
+    <string name="deploy_status_vuln">Vulnerable</string>
+    <string name="deploy_status_no_vuln">No vulnerability - choose another file</string>
+    <string name="deploy_probing">Checking the current slot ABL…</string>
+    <string name="deploy_checking">Checking…</string>
+    <string name="deploy_slot_vuln">Current slot ABL is vulnerable - no ABL flash needed</string>
+    <string name="deploy_slot_clean">Current slot ABL has no efisp vulnerability - provide a vulnerable ABL</string>
+    <string name="deploy_vuln_disabled_hint">Disabled: the current slot ABL already carries the efisp vulnerability.</string>
+    <string name="deploy_partition_hint">Read from partition is only available on a clean system (efisp holds no BDS image).</string>
+    <string name="deploy_install">Install</string>
+    <string name="deploy_busy">Deploying…</string>
+    <string name="deploy_reboot_hint">Reboot the device to apply the deployment.</string>
+    <string name="deploy_done">Deployment complete - reboot to apply</string>
+    <string name="deploy_need_current">Choose the current system ABL first</string>
+    <string name="deploy_need_vuln">Provide a vulnerable ABL first</string>
+    <string name="deploy_err_not_abl">Not a valid ABL image</string>
+    <string name="deploy_err_not_pe">Not a valid EFI image</string>
+    <string name="deploy_err_patch">Failed to patch the ABL</string>
+    <string name="deploy_err_no_vuln">The selected ABL has no efisp vulnerability</string>
+    <string name="deploy_err_no_abl">Cannot locate the current slot ABL</string>
+    <string name="log_deploy_auto">container not initialized; opening deployment</string>
+    <string name="log_container_kept">existing config container kept</string>
+    <string name="msg_boot_cert_removed">BOOT_CERTS certificate removed</string>
+    <string name="logs_clear">Clear</string>
+    <string name="logs_empty">No log entries</string>
+
+    <!-- Entry list -->
+    <string name="btn_save">Save &amp; sync</string>
+    <string name="hint_drag">Drag ⠿ to reorder, tap to edit</string>
+    <string name="entry_system">system</string>
+    <string name="staged_pending">pending copy (applies on save)</string>
+    <string name="delete">Delete</string>
+    <string name="drag_handle">Reorder</string>
+    <string name="msg_saved">Saved &amp; synced</string>
+    <string name="msg_order">Order changed (applies on save)</string>
+    <string name="msg_removed_file">Removed - file will be deleted on save</string>
+    <string name="msg_removed_kept">Removed entry (file kept)</string>
+    <string name="msg_system_protected">System entry - cannot be deleted or renamed</string>
+    <string name="msg_staged">Staged - applies on save</string>
+
+    <!-- Add / edit dialog -->
+    <string name="add_title">New boot entry</string>
+    <string name="edit_title">Edit boot entry</string>
+    <string name="add_hint">The EFI file is copied into persist/efisp/ under the chosen name; applied on save.</string>
+    <string name="edit_hint_system_name">Only the display name can be changed for the system entry.</string>
+    <string name="field_name">Entry name</string>
+    <string name="field_file">Target file name (e.g. MyApp.efi)</string>
+    <string name="field_args">Arguments (optional)</string>
+    <string name="btn_ok">OK</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="err_empty">Name and file name cannot be empty</string>
+    <string name="err_not_efi">File name must end with .efi</string>
+    <string name="err_name_chars">File name may contain only English letters, dots and underscores</string>
+
+    <!-- Post-OTA retention -->
+    <string name="ota_title">Post-OTA operation</string>
+    <string name="ota_body">Run after an OTA has been installed and BEFORE rebooting. This patches the OTA-written ABL into a new boot.efi (the previous one becomes boot_backup.efi and is appended to the boot order), re-flashes the BDS, and copies the current old-BL ABL over the target slot so the next boot keeps the old bootloader. Refuses to run twice.</string>
+    <string name="ota_run">Run post-OTA flash</string>
+    <string name="ota_busy">Running post-OTA flash…</string>
+    <string name="ota_btn">Post-OTA</string>
+
+    <!-- Device operation results -->
+    <string name="err_container_not_aligned">Container size is not sector-aligned: %1$d</string>
+    <string name="msg_container_formatted">Container formatted (%1$d MiB, FAT)</string>
+    <string name="msg_already_mounted">Already mounted</string>
+    <string name="err_mount_failed">Mount failed: %1$s</string>
+    <string name="msg_mounted_at">Mounted at %1$s</string>
+    <string name="msg_saved_sync">Saved &amp; synced</string>
+    <string name="msg_marker_written">Init marker written</string>
+    <string name="err_no_persist_addr">Cannot derive the persist (d,p) address</string>
+    <string name="err_persist_not_mounted">persist is not mounted at %1$s</string>
+    <string name="msg_bds_flashed">BDS flashed to efisp</string>
+    <string name="msg_vuln_found">efisp vulnerability detected</string>
+    <string name="msg_vuln_absent">This ABL has no efisp vulnerability</string>
+    <string name="msg_boot_efi_written">boot.efi generated</string>
+    <string name="err_no_slot">Cannot detect the current slot</string>
+    <string name="msg_vuln_abl_flashed">Vulnerable ABL flashed to %1$s</string>
+    <string name="err_ota_duplicate">Both slots hold the same ABL and boot.efi exists - likely already processed, refusing to run again</string>
+    <string name="err_ota_patch">Failed to patch the target-slot ABL: %1$s</string>
+    <string name="err_boot_efi_write">Failed to write boot.efi: %1$s</string>
+    <string name="msg_ota_skip_copy">Target ABL carries the efisp vulnerability; slot copy skipped, boot.efi/BDS updated</string>
+    <string name="msg_ota_done">Done: target ABL patched and the old BL copied to %1$s</string>
+
+    <!-- Log lines -->
+    <string name="log_asset_missing">warning: asset %1$s missing (run refresh_assets.sh)</string>
+    <string name="log_root_ok">root ok</string>
+    <string name="log_container_bytes">container = %1$d bytes</string>
+    <string name="log_container_corrupt">container corrupt: %1$s</string>
+    <string name="log_container_mounted">container mounted</string>
+    <string name="log_already_mounted">container already mounted</string>
+    <string name="log_marker_skip">init marker present; skipping first-run flow</string>
+    <string name="log_marker_unreadable">init marker present but ENTRIES.CFG unreadable</string>
+    <string name="err_efisp_bounds">Cannot read the efisp partition bounds (sysfs)</string>
+    <string name="err_copy_failed">Copy %1$s failed: %2$s</string>
+
+    <!-- Secure boot -->
+    <string name="settings">Settings</string>
+    <string name="sb_state_title">Secure boot (BOOT_CERTS)</string>
+    <string name="sb_state_disabled">Disabled</string>
+    <string name="sb_state_enabled">Enabled - all EFI images signed</string>
+    <string name="sb_state_degraded">Not properly enabled - unsigned EFI images present</string>
+    <string name="sb_degraded_hint">Some EFI files are not signed; the BDS will refuse to launch them. Re-sign to fix.</string>
+    <string name="sb_key_hint">The key is an RSA-2048 identity inside the device keystore (StrongBox when available), bound to your fingerprint. Every signature needs a biometric prompt; the private key never leaves the hardware.</string>
+    <string name="sb_enable_title">Enable secure boot</string>
+    <string name="sb_enable_body">Generates the hardware key, signs EVERY EFI under persist/efisp (one fingerprint prompt per file) and writes the certificate into BOOT_CERTS. All files must succeed - otherwise nothing is enabled. The BDS enforces verification from the next boot.</string>
+    <string name="sb_enable_run">Enable secure boot</string>
+    <string name="sb_resign">Re-sign all EFI files</string>
+    <string name="sb_disable_title">Disable secure boot</string>
+    <string name="sb_disable_body">Remove the BOOT_CERTS certificate and the keystore key? Signed EFI files stay as they are but are no longer verified.</string>
+    <string name="sb_disable_run">Disable</string>
+    <string name="sb_disable_done">Secure boot disabled</string>
+    <string name="log_sb_forced_off">no secure lock screen; secure boot force-disabled</string>
+    <string name="sb_busy">Enabling secure boot…</string>
+    <string name="sb_busy_sign">Signing (fingerprint)…</string>
+    <string name="sb_prompt_title">Sign EFI image</string>
+    <string name="sb_prompt_subtitle">Authenticate to sign with the secure-boot key</string>
+    <string name="sb_msg_aborted">Aborted - secure boot NOT enabled; run again to retry</string>
+    <string name="sb_msg_signed_ok">Signed successfully</string>
+    <string name="sb_msg_degraded">Signature declined - secure boot is now degraded for this file</string>
+    <string name="err_sb_read">Cannot read %1$s</string>
+    <string name="err_sb_pe">%1$s is not a valid PE image</string>
+    <string name="err_sb_nokey">Keystore key unavailable</string>
+    <string name="err_sb_auth">Fingerprint declined for %1$s</string>
+    <string name="err_sb_write">Cannot write %1$s</string>
+    <string name="err_sb_nofiles">No EFI files found under persist/efisp</string>
+    <string name="err_sb_aborted">Signing failed; certificate not written</string>
+    <string name="log_sb_signed">Signed: %1$s</string>
+    <string name="msg_cert_written">BOOT_CERTS certificate written</string>
+
+    <!-- Secure fastboot (AUTH_CERTS pairing) -->
+    <string name="sf_title">Secure fastboot</string>
+    <string name="sf_settings_hint">Pair computers that may unlock fastboot. A paired certificate is read by the BDS at boot.</string>
+    <string name="sf_open">Manage paired computers</string>
+    <string name="sf_paired_title">Paired computers</string>
+    <string name="sf_empty">No computer paired yet</string>
+    <string name="sf_pair_btn">Pair a computer</string>
+    <string name="sf_delete">Remove</string>
+    <string name="sf_fingerprint">SHA-256 %1$s…</string>
+    <string name="sf_reboot_hint">AUTH_CERTS is loaded by the BDS at boot: a paired or removed certificate takes effect on the next boot. With at least one certificate the device boots locked and fastboot needs authorization.</string>
+    <string name="msg_auth_cert_written">AUTH_CERTS certificate written</string>
+    <string name="msg_auth_cert_removed">AUTH_CERTS certificate removed (effective next boot)</string>
+    <string name="log_paired">paired: %1$s</string>
+    <string name="pair_title">Pair a computer</string>
+    <string name="pair_run_hint">Run this on the computer, then enter the code below:</string>
+    <string name="pair_code_label">Pairing code</string>
+    <string name="pair_waiting">Waiting for the computer…</string>
+    <string name="pair_connected">Computer connected; checking the certificate…</string>
+    <string name="pair_success">Paired: %1$s</string>
+    <string name="pair_failed">Pairing failed: %1$s</string>
+    <string name="pair_done">Done</string>
+    <string name="pair_no_ip">No Wi-Fi address found - connect the phone to the network</string>
+    <string name="pair_err_protocol">unexpected message</string>
+    <string name="pair_err_code">wrong pairing code</string>
+    <string name="pair_err_cert">invalid certificate</string>
+    <string name="pair_err_key">unsupported key type</string>
+    <string name="pair_err_sig">challenge signature rejected</string>
+    <string name="pair_err_store">could not store the certificate</string>
+    <string name="btn_back">Back</string>
+
+    <!-- Log -->
+    <string name="log_title">Log</string>
+</resources>

@@ -1,0 +1,205 @@
+<resources>
+    <string name="app_name">EFI 启动管理器</string>
+
+    <!-- Boot / status -->
+    <string name="checking">检查中…</string>
+    <string name="need_root">需要 root 权限：请在 Magisk / KernelSU / APatch 中为 EFI 启动管理器授予 su 权限，然后重新打开本应用。</string>
+    <string name="ready_initialized">就绪（已初始化）</string>
+    <string name="busy_save">保存中…</string>
+    <string name="busy_download">正在从 repo 下载漏洞 ABL…</string>
+    <string name="busy_repo">repo 中未找到漏洞 ABL</string>
+
+    <!-- First run -->
+    <string name="confirm_model_title">确认机型与文件</string>
+    <string name="confirm_model_body">请确认你的机型 CPU 是 8e5 / 8gen5 且自己能提供旧版本含漏洞 abl。注意：不是当前固件 abl，必须确保机型相符或社区验证可用，否则黑砖。</string>
+    <string name="confirm_pick">我确认，选择文件</string>
+
+    <!-- 每次正常启动的 BDS 版本检查 -->
+    <!-- 每次正常启动的系统组件更新检查 -->
+    <string name="sys_efi_bds">BDS 核心</string>
+    <string name="sys_efi_wrapper">安全 fastboot EFI</string>
+    <string name="sys_efi_entries">系统启动项</string>
+    <string name="sys_update_title">系统组件更新</string>
+    <string name="sys_update_msg">以下组件与内置版本不一致：%1$s。现在更新 BDS 核心、附加 EFI 和系统启动项？</string>
+    <string name="sys_update_btn">更新</string>
+    <string name="sys_update_busy">正在更新系统组件…</string>
+    <string name="sys_update_done">系统组件已更新</string>
+    <string name="msg_sys_efi_written">%1$s 已写入 persist/efisp</string>
+    <string name="msg_sys_efi_present">%1$s 已存在</string>
+    <string name="err_sys_efi_asset">App 资源缺少 %1$s</string>
+    <string name="log_sys_update">系统组件待更新：%1$s</string>
+
+    <!-- 部署页 -->
+    <string name="deploy_title">部署</string>
+    <string name="deploy_settings_hint">重新安装 boot.efi/BDS，必要时更新 ABL。已存在的 config 容器会保留。</string>
+    <string name="deploy_settings_entry">重新部署</string>
+    <string name="deploy_section_current">当前系统的 ABL</string>
+    <string name="deploy_section_vuln">存在 efisp 漏洞的 ABL</string>
+    <string name="deploy_pick_abl">选择 abl.elf/img</string>
+    <string name="deploy_pick_patched">选择已补丁的 ABL（.efi）</string>
+    <string name="deploy_from_partition">从分区获取</string>
+    <string name="deploy_from_partition_label">当前槽 ABL（分区）</string>
+    <string name="deploy_cloud">云端下载</string>
+    <string name="deploy_repo_label">repo 下载</string>
+    <string name="deploy_status_none">未选择</string>
+    <string name="deploy_status_vuln">检测到漏洞</string>
+    <string name="deploy_status_no_vuln">无漏洞，请重新选择</string>
+    <string name="deploy_probing">正在检测当前槽 ABL…</string>
+    <string name="deploy_checking">检测中…</string>
+    <string name="deploy_slot_vuln">当前槽 ABL 含 efisp 漏洞，无需刷写 ABL</string>
+    <string name="deploy_slot_clean">当前槽 ABL 无 efisp 漏洞，请提供含漏洞 ABL</string>
+    <string name="deploy_vuln_disabled_hint">已禁用：当前槽 ABL 已含 efisp 漏洞。</string>
+    <string name="deploy_partition_hint">“从分区获取”仅在干净系统（efisp 无 BDS 镜像）可用。</string>
+    <string name="deploy_install">安装</string>
+    <string name="deploy_busy">正在部署…</string>
+    <string name="deploy_reboot_hint">请重启设备使部署生效。</string>
+    <string name="deploy_done">部署完成，请重启</string>
+    <string name="deploy_need_current">请先选择当前系统的 ABL</string>
+    <string name="deploy_need_vuln">请先提供含漏洞的 ABL</string>
+    <string name="deploy_err_not_abl">不是有效的 ABL 镜像</string>
+    <string name="deploy_err_not_pe">不是有效的 EFI 镜像</string>
+    <string name="deploy_err_patch">ABL 补丁失败</string>
+    <string name="deploy_err_no_vuln">所选 ABL 不含 efisp 漏洞</string>
+    <string name="deploy_err_no_abl">无法定位当前槽 ABL</string>
+    <string name="log_deploy_auto">容器未初始化，进入部署</string>
+    <string name="log_container_kept">已保留现有 config 容器</string>
+    <string name="msg_boot_cert_removed">BOOT_CERTS 证书已删除</string>
+    <string name="logs_clear">清空</string>
+    <string name="logs_empty">暂无日志</string>
+
+    <!-- Entry list -->
+    <string name="btn_save">保存并 sync</string>
+    <string name="hint_drag">拖动 ⠿ 排序，点按条目编辑</string>
+    <string name="entry_system">系统项</string>
+    <string name="staged_pending">待复制（保存时生效）</string>
+    <string name="delete">删除</string>
+    <string name="drag_handle">排序</string>
+    <string name="msg_saved">已保存并 sync</string>
+    <string name="msg_order">顺序已调整（保存后生效）</string>
+    <string name="msg_removed_file">已移除，文件将在保存时删除</string>
+    <string name="msg_removed_kept">已删除启动项（保留文件）</string>
+    <string name="msg_system_protected">系统项不可删除或重命名</string>
+    <string name="msg_staged">已暂存（保存时生效）</string>
+
+    <!-- Add / edit dialog -->
+    <string name="add_title">新建启动项</string>
+    <string name="edit_title">编辑启动项</string>
+    <string name="add_hint">EFI 文件将复制到 persist/efisp/ 并按指定文件名重命名；保存时生效。</string>
+    <string name="edit_hint_system_name">系统项仅可修改显示名称。</string>
+    <string name="field_name">启动项名称</string>
+    <string name="field_file">目标文件名（如 MyApp.efi）</string>
+    <string name="field_args">启动参数（可选）</string>
+    <string name="btn_ok">确定</string>
+    <string name="btn_cancel">取消</string>
+    <string name="err_empty">名称与文件名不能为空</string>
+    <string name="err_not_efi">文件名必须以 .efi 结尾</string>
+    <string name="err_name_chars">文件名只能包含英文字母、点和下划线</string>
+
+    <!-- Post-OTA retention -->
+    <string name="ota_title">OTA 后操作</string>
+    <string name="ota_body">请在 OTA 安装完成后、重启前执行。将重新补丁 OTA 写入的 ABL 生成新 boot.efi（旧文件保留为 boot_backup.efi 并追加到启动项末尾），重新刷入 BDS，并把当前槽旧 BL 的 ABL 复制到目标槽，使下次启动保留旧 bootloader。重复执行会被拒绝。</string>
+    <string name="ota_run">执行 OTA 后刷写</string>
+    <string name="ota_busy">正在执行 OTA 后刷写…</string>
+    <string name="ota_btn">OTA 后操作</string>
+
+    <!-- Device operation results -->
+    <string name="err_container_not_aligned">容器长度不是整扇区：%1$d</string>
+    <string name="msg_container_formatted">容器已格式化（%1$d MiB，FAT）</string>
+    <string name="msg_already_mounted">已挂载</string>
+    <string name="err_mount_failed">挂载失败：%1$s</string>
+    <string name="msg_mounted_at">已挂载到 %1$s</string>
+    <string name="msg_saved_sync">已保存并 sync</string>
+    <string name="msg_marker_written">已写入初始化标记</string>
+    <string name="err_no_persist_addr">无法推算 persist 的 (d,p) 地址</string>
+    <string name="err_persist_not_mounted">persist 未挂载到 %1$s</string>
+    <string name="msg_bds_flashed">BDS 已刷入 efisp</string>
+    <string name="msg_vuln_found">检测到 efisp 漏洞</string>
+    <string name="msg_vuln_absent">该 ABL 不含 efisp 漏洞</string>
+    <string name="msg_boot_efi_written">boot.efi 已生成</string>
+    <string name="err_no_slot">无法识别当前槽位</string>
+    <string name="msg_vuln_abl_flashed">漏洞 ABL 已刷入 %1$s</string>
+    <string name="err_ota_duplicate">当前槽与目标槽 ABL 相同且 boot.efi 已存在，疑似已处理过，拒绝重复刷写</string>
+    <string name="err_ota_patch">目标槽 ABL 补丁失败：%1$s</string>
+    <string name="err_boot_efi_write">写入 boot.efi 失败：%1$s</string>
+    <string name="msg_ota_skip_copy">目标槽 ABL 带 efisp 漏洞，已跳过槽位复制；boot.efi/BDS 已更新</string>
+    <string name="msg_ota_done">完成：已补丁目标槽 ABL 并将旧 BL 复制到 %1$s</string>
+
+    <!-- Log lines -->
+    <string name="log_asset_missing">警告：assets 缺少 %1$s（运行 refresh_assets.sh 补齐）</string>
+    <string name="log_root_ok">root 可用</string>
+    <string name="log_container_bytes">容器 = %1$d 字节</string>
+    <string name="log_container_corrupt">容器损坏：%1$s</string>
+    <string name="log_container_mounted">容器已挂载</string>
+    <string name="log_already_mounted">容器已挂载，跳过</string>
+    <string name="log_marker_skip">检测到初始化标记，跳过首次启动流程</string>
+    <string name="log_marker_unreadable">初始化标记存在但 ENTRIES.CFG 不可读</string>
+    <string name="err_efisp_bounds">无法读取 efisp 分区边界（sysfs）</string>
+    <string name="err_copy_failed">复制 %1$s 失败：%2$s</string>
+
+    <!-- Secure boot -->
+    <string name="settings">设置</string>
+    <string name="sb_state_title">安全启动（BOOT_CERTS）</string>
+    <string name="sb_state_disabled">未启用</string>
+    <string name="sb_state_enabled">已启用 - 所有 EFI 镜像均已签名</string>
+    <string name="sb_state_degraded">未正常启用 - 存在未签名 EFI 镜像</string>
+    <string name="sb_degraded_hint">部分 EFI 文件未签名，BDS 将拒绝启动它们。重新签名可修复。</string>
+    <string name="sb_key_hint">密钥为设备密钥库（支持时使用 StrongBox 安全芯片）内的 RSA-2048 身份，绑定指纹。每次签名都需要指纹验证，私钥永不离开硬件。</string>
+    <string name="sb_enable_title">启用安全启动</string>
+    <string name="sb_enable_body">生成硬件密钥，对 persist/efisp 下全部 EFI 逐个签名（每个文件一次指纹），并将证书写入 BOOT_CERTS。全部成功才启用，任一失败则不启用。BDS 自下次启动起强制验签。</string>
+    <string name="sb_enable_run">启用安全启动</string>
+    <string name="sb_resign">重新签名全部 EFI</string>
+    <string name="sb_disable_title">关闭安全启动</string>
+    <string name="sb_disable_body">删除 BOOT_CERTS 证书和 keystore 密钥？已签名的 EFI 文件保持原样，但不再验证。</string>
+    <string name="sb_disable_run">关闭</string>
+    <string name="sb_disable_done">安全启动已关闭</string>
+    <string name="log_sb_forced_off">未设置锁屏密码，已强制关闭安全启动</string>
+    <string name="sb_busy">正在启用安全启动…</string>
+    <string name="sb_busy_sign">正在签名（指纹）…</string>
+    <string name="sb_prompt_title">签名 EFI 镜像</string>
+    <string name="sb_prompt_subtitle">验证指纹以使用安全启动密钥签名</string>
+    <string name="sb_msg_aborted">已中止 - 安全启动未启用，可重试</string>
+    <string name="sb_msg_signed_ok">签名成功</string>
+    <string name="sb_msg_degraded">签名被拒绝 - 该文件处于未正常启用状态</string>
+    <string name="err_sb_read">无法读取 %1$s</string>
+    <string name="err_sb_pe">%1$s 不是有效的 PE 镜像</string>
+    <string name="err_sb_nokey">密钥库密钥不可用</string>
+    <string name="err_sb_auth">%1$s 指纹验证未通过</string>
+    <string name="err_sb_write">无法写入 %1$s</string>
+    <string name="err_sb_nofiles">persist/efisp 下没有 EFI 文件</string>
+    <string name="err_sb_aborted">签名失败，证书未写入</string>
+    <string name="log_sb_signed">已签名：%1$s</string>
+    <string name="msg_cert_written">BOOT_CERTS 证书已写入</string>
+
+    <!-- 安全 fastboot（AUTH_CERTS 配对） -->
+    <string name="sf_title">安全 fastboot</string>
+    <string name="sf_settings_hint">配对允许解锁 fastboot 的电脑。配对证书由 BDS 在开机时读取。</string>
+    <string name="sf_open">管理已配对的电脑</string>
+    <string name="sf_paired_title">已配对的电脑</string>
+    <string name="sf_empty">尚未配对任何电脑</string>
+    <string name="sf_pair_btn">配对电脑</string>
+    <string name="sf_delete">移除</string>
+    <string name="sf_fingerprint">SHA-256 %1$s…</string>
+    <string name="sf_reboot_hint">AUTH_CERTS 由 BDS 在开机时加载：新增或删除证书都在下次开机生效。存在证书时设备以锁定模式启动，fastboot 需要授权才能解锁。</string>
+    <string name="msg_auth_cert_written">AUTH_CERTS 证书已写入</string>
+    <string name="msg_auth_cert_removed">AUTH_CERTS 证书已移除（下次开机生效）</string>
+    <string name="log_paired">已配对：%1$s</string>
+    <string name="pair_title">配对电脑</string>
+    <string name="pair_run_hint">在电脑上运行以下命令，然后输入下面的配对码：</string>
+    <string name="pair_code_label">配对码</string>
+    <string name="pair_waiting">等待电脑连接…</string>
+    <string name="pair_connected">电脑已连接，正在校验证书…</string>
+    <string name="pair_success">配对成功：%1$s</string>
+    <string name="pair_failed">配对失败：%1$s</string>
+    <string name="pair_done">完成</string>
+    <string name="pair_no_ip">未找到 Wi-Fi 地址，请先把手机连接到网络</string>
+    <string name="pair_err_protocol">消息格式错误</string>
+    <string name="pair_err_code">配对码错误</string>
+    <string name="pair_err_cert">证书无效</string>
+    <string name="pair_err_key">密钥类型不支持</string>
+    <string name="pair_err_sig">挑战签名验证失败</string>
+    <string name="pair_err_store">证书写入失败</string>
+    <string name="btn_back">返回</string>
+
+    <!-- Log -->
+    <string name="log_title">日志</string>
+</resources>
