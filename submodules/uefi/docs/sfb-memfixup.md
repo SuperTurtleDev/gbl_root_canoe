@@ -10,6 +10,11 @@ required for a mainline Linux kernel started through its EFI stub
 (`LoadImage()`/`StartImage()` on the kernel `Image`) to boot on this
 platform, and both are harmless for every other payload.
 
+A third, optional piece - the operator override table `CONFIG\MEMCFG` - is
+loaded later, once the config store is mounted, and rewrites parts of the
+merged view on the operator's word. See
+[Operator overrides (CONFIG\MEMCFG)](#operator-overrides-configmemcfg).
+
 ## EFI_MEMORY_ATTRIBUTE_PROTOCOL
 
 **Problem.** Freshly allocated `EfiLoaderCode` pages are mapped execute-never
@@ -64,6 +69,10 @@ on a fraction of the installed RAM (about 0.7 GiB of the omitted memory plus
    their attributes kept, the rest stays `RESERVED`.
 2. **add** - TZ ranges the firmware map does not describe at all are appended
    as new `CONVENTIONAL` entries with `UC|WC|WT|WB`.
+3. **force** - every `CONFIG\MEMCFG` override is cut out of whatever the two
+   steps above produced and appended with the configured type and
+   attributes. This is the operator's word: nothing is validated against
+   the TZ list or the firmware.
 
 A `RESERVED` descriptor **without** `WB` is passed through untouched. The
 firmware registers memory it shares with other masters or uses as
@@ -87,18 +96,63 @@ The kernel still honours the device tree `/reserved-memory` `no-map`
 carveouts: `early_init_fdt_scan_reserved_mem()` re-reserves them over
 anything the UEFI map hands over.
 
+## Operator overrides (CONFIG\MEMCFG)
+
+The merge is conservative by design: it never touches memory the firmware
+did not itself record as normal cacheable RAM. Sometimes the operator knows
+better - a build that never starts the modem remoteproc has no use for the
+modem carveouts the firmware keeps as UC-only `RESERVED` (`PIL_Reserved`),
+and the kernel cannot use them until the UEFI map calls them RAM.
+
+`CONFIG\MEMCFG` in the config container is that table:
+
+- Loaded once by `SfbMemFixupLoadConfig()` while the container is mounted
+  (right after `SfbConfigStoreMount()` in `LinuxLoaderEntry`), then resident
+  like the certificates - fastboot runs with the store unmounted. A missing
+  or unreadable file is an empty table, not an error; invalid lines are
+  skipped and counted in the debug log. If the TZ merge did not install the
+  `GetMemoryMap` hook (no RAM partition protocol), the table installs it
+  itself.
+- One override per line, `NAME BASE SIZE TYPE ATTRIBUTE` - all five fields
+  mandatory, `#` starts a comment. `BASE`/`SIZE` are hex and 4 KiB aligned;
+  `TYPE` is a UEFI memory type as a number or name (`CONVENTIONAL`,
+  `RESERVED`, ...); `ATTRIBUTE` is the `EFI_MEMORY_*` mask (`0xF` =
+  `UC|WC|WT|WB`, normal RAM). The full grammar is in
+  `Library/SfbMemFixupLib/SfbMemCfg.h`.
+- Each override is cut out of the merge view - the head and tail of a
+  straddled descriptor survive, a descriptor inside the override disappears
+  - and appended with its own type and attributes. Lines apply in file
+  order: a later line wins where lines overlap.
+- Nothing is validated against the TZ list, the firmware map or anything
+  else. An override that hands TZ or firmware runtime memory to the kernel
+  will fault exactly as it says.
+
+A commented example that releases the modem carveouts plus the five
+unreserved gaps between the vendor PIL carveouts on the canoe ships as
+`docs/examples/MEMCFG` - about 318 MiB in total (235.6 MiB modem block +
+82.3 MiB of alignment slack and the tail above `adspslpi` that no
+reserved-memory node claims). Live regions inside the same `PIL_Reserved`
+descriptor (gpu microcode, camera/CVP, video, cdsp, spss, dcp, soccp,
+adsp) are deliberately left untouched. The modem block only gains memory
+on kernels whose device tree does not re-reserve those ranges (`no-map`
+in `reserved-memory` wins over the UEFI map); the gaps have no DT nodes
+and take effect for every EFI-booted kernel.
+
 ## Verification
 
-The interval arithmetic is pure and host-tested:
+The interval arithmetic, the parser and the override application are pure
+and host-tested:
 
 ```sh
 QcomModulePkg/Library/SfbMemFixupLib/Test/test.sh
 ```
 
-runs edge cases plus a regression against real device dumps
-(`Test/fixtures/memmap.txt`, `Test/fixtures/tzmap.txt`, fetched over
-fastboot) and checks that release + add + already-usable + other-described
-partitions the TZ total exactly.
+runs `MemFixupTest` (edge cases plus a regression against real device dumps,
+`Test/fixtures/memmap.txt` and `Test/fixtures/tzmap.txt`, fetched over
+fastboot, checking that release + add + already-usable + other-described
+partitions the TZ total exactly) and `MemCfgTest` (the parser grammar and
+the carve/append arithmetic, including the shipped example applied to the
+reference firmware map).
 
 On the device, a kernel booted with `efi=debug` prints the merged map from
 the stub, and `dmesg | grep -i 'efi: mem'` shows the added `Conventional`

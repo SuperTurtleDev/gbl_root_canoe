@@ -135,3 +135,14 @@ means the feature is off and BDS behaves exactly as before. See
 [sfb-security.md](sfb-security.md) for the full model - the challenge
 protocol, the fastboot command gating and the signing tools under
 `tools/sfbsec/` in the top-level repository.
+
+## Memory map overrides
+
+The container may also hold `CONFIG\MEMCFG`, the operator override table for
+the GetMemoryMap merge. It is read once at power-on while the container is
+mounted and stays resident for the rest of the session, like the
+certificates; a missing file means no overrides. Each line is
+`NAME BASE SIZE TYPE ATTRIBUTE`. A commented example that releases the
+modem carveouts and the unreserved PIL gaps (about 318 MiB on the canoe)
+ships as `docs/examples/MEMCFG`; the format and semantics
+are documented in [sfb-memfixup.md](sfb-memfixup.md).

@@ -1,0 +1,52 @@
+# CONFIG\MEMCFG - operator overrides for the memory map the BDS hands to
+# the kernel. Install as CONFIG\MEMCFG in the efisp config container.
+#
+# NAME  BASE  SIZE  TYPE  ATTRIBUTE      (all five fields mandatory)
+#   BASE/SIZE  hex, 4 KiB aligned
+#   TYPE       UEFI memory type, number or name (CONVENTIONAL, RESERVED, ...)
+#   ATTRIBUTE  EFI_MEMORY_* mask, hex; 0xF = UC|WC|WT|WB (normal RAM)
+#
+# Lines apply in order: a later line wins where it overlaps an earlier one.
+# The table is a force - nothing is checked against TZ or the firmware.
+#
+# Total: ~318 MiB (235.6 modem block + 82.3 PIL gaps). Layout from the
+# stock canoe vendor_boot DTB and the on-device UEFI map (PIL_Reserved is
+# one UC-only RESERVED descriptor 0x8AA00000-0xA7CFFFFF).
+#
+# ---- modem block (235.6 MiB) ------------------------------------------
+# A build that never starts the modem remoteproc has no use for the modem
+# carveouts. Firmware marks these UC-only RESERVED (XBL label
+# PIL_Reserved); the stock OS loads modem.mdt here, mainline has no
+# qcom,kaanapali-mpss-pas node. UEFI itself loads nothing into this range
+# (xbl_config pil: AutoStartImages=0, RetailImages=ABL,SPSS,ImageFv), so it
+# is plain DDR at kernel entry.
+#
+# The kernel still honours its own device tree: with mpss_mem /
+# q6_mpss_dtb / ipa_fw / ipa_gsi marked no-map in kaanapali.dtsi this gains
+# nothing until those four nodes are removed there.
+#
+# ---- PIL gaps (82.3 MiB) ----------------------------------------------
+# Holes inside PIL_Reserved that no reserved-memory node claims: alignment
+# slack between the vendor carveouts plus the 25 MiB tail above adspslpi.
+# The stock OS runs them as ordinary RAM; the UEFI map hides them inside
+# the UC-only RESERVED descriptor, and the TZ merge deliberately never
+# releases UC-only ranges - only this force table can. Kept regions stay
+# untouched: gpu_microcode, camera/camera_2/cvp, video (iris), cdsp,
+# spss+spu shared, dcp, soccp, adsp - anything a live remoteproc or
+# firmware block may still own.
+#
+# Sizes and bases from the stock canoe vendor_boot DTB (reserved-memory
+# nodes and the holes between them).
+
+# modem block
+mpss          0x8AA00000  0xEB00000  CONVENTIONAL  0xF
+q6_mpss_dtb   0x99500000  0x80000    CONVENTIONAL  0xF
+ipa_fw        0x99580000  0x10000    CONVENTIONAL  0xF
+ipa_gsi       0x99590000  0xA000     CONVENTIONAL  0xF
+
+# PIL gaps
+pil_gap_ucode_cam    0x9959C000  0x64000    CONVENTIONAL  0xF
+pil_gap_cdsp_spu     0x9CE80000  0x2E00000  CONVENTIONAL  0xF
+pil_gap_spss_dcp     0x9FFE0000  0x70000    CONVENTIONAL  0xF
+pil_gap_soccp_adsp   0xA0910000  0xA70000   CONVENTIONAL  0xF
+pil_gap_adsp_tail    0xA6400000  0x1900000  CONVENTIONAL  0xF

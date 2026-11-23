@@ -63,4 +63,21 @@ SfbMemFixupInstallMemmapMerge (
   VOID
   );
 
+/*
+ * Load CONFIG\MEMCFG from the efisp config container (which must be
+ * mounted) into the override table applied on top of the merged
+ * GetMemoryMap view: NAME BASE SIZE TYPE ATTRIBUTE per line, see
+ * Library/SfbMemFixupLib/SfbMemCfg.h. A missing or unreadable file is an
+ * empty table, not an error; invalid lines are skipped and counted in the
+ * debug log. Replaces any previously loaded table. Installs the
+ * GetMemoryMap hook if overrides exist and the merge did not install it.
+ *
+ * @retval EFI_SUCCESS   Always, unless the hook had to be installed and
+ *                       that failed.
+ */
+EFI_STATUS
+SfbMemFixupLoadConfig (
+  VOID
+  );
+
 #endif /* __SFB_MEM_FIXUP_H__ */

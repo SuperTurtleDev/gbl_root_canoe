@@ -18,6 +18,8 @@
 [Sources]
   SfbMemRegions.h
   SfbMemRegions.c
+  SfbMemCfg.h
+  SfbMemCfg.c
   SfbMemAttr.c
   SfbMemmapMerge.c
   SfbMemFixup.c
@@ -35,6 +37,10 @@
   MemoryAllocationLib
   UefiBootServicesTableLib
   DxeServicesTableLib
+  SfbConfigStoreLib
+
+[Guids]
+  gEfiFileInfoGuid                  ## CONSUMES (CONFIG\MEMCFG size query)
 
 [Protocols]
   gEfiCpuArchProtocolGuid           ## CONSUMES (page table attribute writes)

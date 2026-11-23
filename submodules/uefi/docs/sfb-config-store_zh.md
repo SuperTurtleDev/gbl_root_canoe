@@ -86,3 +86,12 @@ Android Tools\Reboot Tools:\efisp\tools\RebootTools.efi
 | `BOOT_CERTS` | B 类 —— EFI 代码签名 | 所有被启动的 EFI 必须带可验证的签名 |
 
 两个功能完全由证书驱动：目录为空（或不存在）即关闭该功能，BDS 行为与之前完全一致。完整模型（挑战协议、fastboot 命令门控、顶层仓库 `tools/sfbsec/` 下的签名工具）见 [sfb-security.md](sfb-security.md)。
+
+## 内存表覆盖
+
+容器中还可以存放 `CONFIG\MEMCFG`，即 GetMemoryMap 合并的操作员覆盖表。
+它在开机时随容器挂载读取一次，之后像证书一样在整个会话中常驻；文件缺失即无覆盖。
+每行格式为 `NAME BASE SIZE TYPE ATTRIBUTE`。随仓发布的带注释示例
+（释放 modem 保留区与 PIL 无主缝隙，canoe 上约 318 MiB）位于
+`docs/examples/MEMCFG`；格式与语义见
+[sfb-memfixup_zh.md](sfb-memfixup_zh.md)。

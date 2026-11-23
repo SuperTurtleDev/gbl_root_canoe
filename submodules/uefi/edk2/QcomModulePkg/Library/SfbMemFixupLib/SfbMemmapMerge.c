@@ -1,11 +1,12 @@
 /*
- * GetMemoryMap merge: present the TZ-usable DDR the firmware map omits.
+ * GetMemoryMap merge: present the TZ-usable DDR the firmware map omits,
+ * then apply the operator overrides from CONFIG\MEMCFG.
  *
  * The platform firmware describes only the memory its own boot stages
  * touched; the TZ RAM partition table (EFI_RAMPARTITION_PROTOCOL) is the
  * authority on what the application processor may use. An EFI-booted
  * kernel builds memblock from the UEFI map, so the BDS wraps
- * gBS->GetMemoryMap and returns a merged view:
+ * gBS->GetMemoryMap and returns a merged view built in this order:
  *
  *   release: RESERVED descriptors the firmware itself records as normal
  *            cacheable memory (EFI_MEMORY_WB) are split against the TZ
@@ -23,6 +24,10 @@
  *            CONVENTIONAL entries, appended after the original descriptors.
  *            The firmware allocator does not know them, so no later
  *            allocation can land there: the additions are stable.
+ *   force:   every CONFIG\MEMCFG override is cut out of whatever the two
+ *            steps above produced and appended with the configured type
+ *            and attributes (SfbMemCfg.h). This is the operator's word:
+ *            nothing is validated against TZ or the firmware.
  *
  * Recomputed on every call from the live map, so the view tracks firmware
  * descriptors that appear later. The MapKey is the firmware's own; between
@@ -35,14 +40,18 @@
  */
 
 #include <Uefi.h>
+#include <Guid/FileInfo.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/DebugLib.h>
 #include <Library/MemoryAllocationLib.h>
+#include <Library/SfbConfigStore.h>
 #include <Library/SfbMemFixup.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Protocol/EFIRamPartition.h>
+#include <Protocol/SimpleFileSystem.h>
 
 #include "SfbMemRegions.h"
+#include "SfbMemCfg.h"
 
 /* kernel is_usable_memory(): these types with EFI_MEMORY_WB are the ranges
  * the firmware already hands the kernel - never describe them twice */
@@ -71,6 +80,12 @@
  * matching fill, and descriptors split into several pieces */
 #define SFB_MM_SCRATCH_SLACK    (SFB_MEM_MAX_REGIONS * 2)
 
+/* the assembled view; ~110 firmware descriptors on the reference device */
+#define SFB_MM_VIEW_MAX         512
+
+#define SFB_MM_CONFIG_PATH      L"CONFIG\\MEMCFG"
+#define SFB_MM_CONFIG_MAX_BYTES SIZE_64KB
+
 STATIC EFI_GET_MEMORY_MAP  mOrigGetMemoryMap;
 STATIC VOID               *mScratch;
 STATIC UINTN               mScratchSize;
@@ -78,12 +93,17 @@ STATIC UINTN               mScratchSize;
 STATIC SFB_MEM_REGION      mTz[SFB_MEM_MAX_REGIONS];
 STATIC UINT32              mNumTz;
 
+STATIC SFB_MEM_OVERRIDE    mOverrides[SFB_MEM_CFG_MAX];
+STATIC UINT32              mNumOverrides;
+
 /* per-call work areas; the hook may run at TPL_NOTIFY, never re-entrantly */
 STATIC SFB_MEM_REGION      mFirmwareClaims[SFB_MEM_MAX_REGIONS * 2];
 STATIC SFB_MEM_REGION      mUsableClaims[SFB_MEM_MAX_REGIONS * 2];
 STATIC SFB_MEM_REGION      mAddition[SFB_MEM_MAX_REGIONS];
 STATIC SFB_MEM_REGION      mMergeScratch[SFB_MEM_MAX_REGIONS * 2];
 STATIC SFB_MEM_PIECE       mPieces[SFB_MEM_MAX_REGIONS + 2];
+STATIC SFB_MEM_DESC        mView[SFB_MM_VIEW_MAX];
+STATIC BOOLEAN             mViewOverflowLogged;
 
 STATIC
 EFI_MEMORY_DESCRIPTOR *
@@ -141,6 +161,10 @@ SfbMmComputeAdditions (
   UINTN       i;
   EFI_STATUS  Status;
 
+  if (mNumTz == 0) {
+    return 0;
+  }
+
   for (i = 0; i < OrigSize / DescSize; i++) {
     EFI_MEMORY_DESCRIPTOR  *D = SfbMmDesc (mScratch, DescSize, i);
 
@@ -175,6 +199,95 @@ SfbMmComputeAdditions (
 }
 
 STATIC
+BOOLEAN
+SfbMmViewPush (
+  IN OUT UINT32  *Count,
+  IN     UINT64   Base,
+  IN     UINT64   Size,
+  IN     UINT32   Type,
+  IN     UINT64   Attr
+  )
+{
+  if (*Count >= SFB_MM_VIEW_MAX) {
+    return FALSE;
+  }
+  mView[*Count].Base = Base;
+  mView[*Count].Size = Size;
+  mView[*Count].Type = Type;
+  mView[*Count].Attr = Attr;
+  (*Count)++;
+  return TRUE;
+}
+
+/*
+ * Assemble the complete view in mView: original descriptors in order
+ * (releasable RESERVED ones split against TZ), the additions, then the
+ * overrides. The entry count is exact, so the size reported on a query is
+ * exactly what the matching fill produces.
+ *
+ * @retval EFI_OUT_OF_RESOURCES  SFB_MM_VIEW_MAX exceeded; caller falls back
+ *                               to the firmware's own map.
+ */
+STATIC
+EFI_STATUS
+SfbMmBuildView (
+  IN  UINTN    OrigSize,
+  IN  UINTN    Ds,
+  IN  UINT32   NumAdd,
+  OUT UINT32  *ViewCount
+  )
+{
+  UINT32  n = 0;
+  UINTN   i;
+  UINT32  j;
+
+  for (i = 0; i < OrigSize / Ds; i++) {
+    EFI_MEMORY_DESCRIPTOR  *D = SfbMmDesc (mScratch, Ds, i);
+    UINT64                  Size = (UINT64)D->NumberOfPages * EFI_PAGE_SIZE;
+    INT32                   np, k;
+
+    if (!SFB_MM_RELEASABLE (D)) {
+      if (!SfbMmViewPush (&n, D->PhysicalStart, Size, D->Type, D->Attribute)) {
+        return EFI_OUT_OF_RESOURCES;
+      }
+      continue;
+    }
+    np = SfbMemSplitVsTz (D->PhysicalStart, Size, mTz, mNumTz,
+                          mPieces, ARRAY_SIZE (mPieces));
+    if (np <= 0) {                          /* capacity guard: keep verbatim */
+      if (!SfbMmViewPush (&n, D->PhysicalStart, Size, D->Type, D->Attribute)) {
+        return EFI_OUT_OF_RESOURCES;
+      }
+      continue;
+    }
+    for (k = 0; k < np; k++) {
+      if (!SfbMmViewPush (&n, mPieces[k].Base, mPieces[k].Size,
+                          mPieces[k].InTz ? EfiConventionalMemory : D->Type,
+                          D->Attribute)) {
+        return EFI_OUT_OF_RESOURCES;
+      }
+    }
+  }
+
+  for (j = 0; j < NumAdd; j++) {
+    if (!SfbMmViewPush (&n, mAddition[j].Base, mAddition[j].Size,
+                        EfiConventionalMemory, SFB_MM_ADD_ATTR)) {
+      return EFI_OUT_OF_RESOURCES;
+    }
+  }
+
+  for (j = 0; j < mNumOverrides; j++) {
+    if (EFI_ERROR (SfbMemApplyOverride (mView, &n, SFB_MM_VIEW_MAX,
+                                        &mOverrides[j].Desc))) {
+      return EFI_OUT_OF_RESOURCES;
+    }
+  }
+
+  *ViewCount = n;
+  return EFI_SUCCESS;
+}
+
+STATIC
 EFI_STATUS
 EFIAPI
 SfbMmHookedGetMemoryMap (
@@ -188,11 +301,9 @@ SfbMmHookedGetMemoryMap (
   EFI_STATUS  Status;
   UINTN       OrigSize;
   UINTN       Ds;
-  UINTN       Entries;
-  UINTN       TotalEntries;
   UINTN       TotalSize;
   UINT32      NumAdd;
-  UINTN       i;
+  UINT32      ViewCount = 0;
   BOOLEAN     Query;
 
   if (MemoryMapSize == NULL) {
@@ -227,77 +338,77 @@ SfbMmHookedGetMemoryMap (
     return Status;
   }
   Ds = *DescriptorSize;
-  Entries = OrigSize / Ds;
 
   NumAdd = SfbMmComputeAdditions (OrigSize, Ds);
-
-  /* pass 1: predict the entry count (query responses size the buffer) */
-  TotalEntries = NumAdd;
-  for (i = 0; i < Entries; i++) {
-    EFI_MEMORY_DESCRIPTOR  *D = SfbMmDesc (mScratch, Ds, i);
-
-    if (SFB_MM_RELEASABLE (D)) {
-      INT32  n = SfbMemSplitVsTz (D->PhysicalStart,
-                                  (UINT64)D->NumberOfPages * EFI_PAGE_SIZE,
-                                  mTz, mNumTz, mPieces, ARRAY_SIZE (mPieces));
-      TotalEntries += n > 0 ? (UINTN)n : 1;
-    } else {
-      TotalEntries++;
+  Status = SfbMmBuildView (OrigSize, Ds, NumAdd, &ViewCount);
+  if (EFI_ERROR (Status)) {
+    /* view too large: hand out the firmware's own map rather than fail */
+    if (!mViewOverflowLogged) {
+      DEBUG ((EFI_D_ERROR, "SFB-MEM: view exceeds %u entries, merge bypassed\n",
+              SFB_MM_VIEW_MAX));
+      mViewOverflowLogged = TRUE;
     }
+    if (Query || *MemoryMapSize < OrigSize) {
+      *MemoryMapSize = OrigSize;
+      return EFI_BUFFER_TOO_SMALL;
+    }
+    CopyMem (MemoryMap, mScratch, OrigSize);
+    *MemoryMapSize = OrigSize;
+    return EFI_SUCCESS;
   }
-  TotalSize = TotalEntries * Ds;
 
+  TotalSize = (UINTN)ViewCount * Ds;
   if (Query || *MemoryMapSize < TotalSize) {
     *MemoryMapSize = TotalSize;
     return EFI_BUFFER_TOO_SMALL;
   }
 
-  /* pass 2: emit - original descriptors in order, RESERVED ones split
-   * against TZ (in-TZ pieces released as CONVENTIONAL), then the additions */
   {
     EFI_MEMORY_DESCRIPTOR  *Out = MemoryMap;
-    UINT32                  j;
+    UINT32                  i;
 
-    for (i = 0; i < Entries; i++) {
-      EFI_MEMORY_DESCRIPTOR  *D = SfbMmDesc (mScratch, Ds, i);
-      INT32                   n;
-      INT32                   k;
-
-      if (!SFB_MM_RELEASABLE (D)) {
-        CopyMem (Out, D, Ds);
-        Out = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Out + Ds);
-        continue;
-      }
-      n = SfbMemSplitVsTz (D->PhysicalStart,
-                           (UINT64)D->NumberOfPages * EFI_PAGE_SIZE,
-                           mTz, mNumTz, mPieces, ARRAY_SIZE (mPieces));
-      if (n <= 0) {
-        CopyMem (Out, D, Ds);               /* capacity guard: keep verbatim */
-        Out = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Out + Ds);
-        continue;
-      }
-      for (k = 0; k < n; k++) {
-        ZeroMem (Out, Ds);
-        CopyMem (Out, D, sizeof (*D));      /* attributes kept (WB by selection) */
-        Out->PhysicalStart = mPieces[k].Base;
-        Out->NumberOfPages = mPieces[k].Size / EFI_PAGE_SIZE;
-        if (mPieces[k].InTz) {
-          Out->Type = EfiConventionalMemory;
-        }
-        Out = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Out + Ds);
-      }
-    }
-
-    for (j = 0; j < NumAdd; j++) {
+    for (i = 0; i < ViewCount; i++) {
       ZeroMem (Out, Ds);
-      Out->Type = EfiConventionalMemory;
-      Out->PhysicalStart = mAddition[j].Base;
-      Out->NumberOfPages = mAddition[j].Size / EFI_PAGE_SIZE;
-      Out->Attribute = SFB_MM_ADD_ATTR;
+      Out->Type          = mView[i].Type;
+      Out->PhysicalStart = mView[i].Base;
+      Out->VirtualStart  = 0;
+      Out->NumberOfPages = mView[i].Size / EFI_PAGE_SIZE;
+      Out->Attribute     = mView[i].Attr;
       Out = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Out + Ds);
     }
-    *MemoryMapSize = (UINTN)((UINT8 *)Out - (UINT8 *)MemoryMap);
+    *MemoryMapSize = TotalSize;
   }
+  return EFI_SUCCESS;
+}
+
+/* Take over gBS->GetMemoryMap. Idempotent. */
+STATIC
+EFI_STATUS
+SfbMmInstallHook (
+  VOID
+  )
+{
+  EFI_STATUS  Status;
+  UINTN       Size = 0;
+  UINTN       Key = 0;
+  UINTN       DescSize = 0;
+  UINT32      DescVer = 0;
+
+  if (mOrigGetMemoryMap != NULL) {
+    return EFI_SUCCESS;
+  }
+
+  Status = gBS->GetMemoryMap (&Size, NULL, &Key, &DescSize, &DescVer);
+  if (Status != EFI_BUFFER_TOO_SMALL || DescSize == 0) {
+    return EFI_DEVICE_ERROR;
+  }
+  Status = SfbMmGrowScratch (Size, DescSize);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  mOrigGetMemoryMap = gBS->GetMemoryMap;
+  gBS->GetMemoryMap = SfbMmHookedGetMemoryMap;
   return EFI_SUCCESS;
 }
 
@@ -349,7 +460,7 @@ SfbMemFixupInstallMemmapMerge (
   )
 {
   EFI_STATUS  Status;
-  UINTN       Size = 0;
+  UINTN       Size;
   UINTN       Key = 0;
   UINTN       DescSize = 0;
   UINT32      DescVer = 0;
@@ -357,7 +468,7 @@ SfbMemFixupInstallMemmapMerge (
   UINT32      j;
   UINT64      Total = 0;
 
-  if (mOrigGetMemoryMap != NULL) {
+  if (mNumTz != 0) {
     return EFI_SUCCESS;
   }
 
@@ -365,31 +476,129 @@ SfbMemFixupInstallMemmapMerge (
   if (EFI_ERROR (Status)) {
     return Status;
   }
-
-  Status = gBS->GetMemoryMap (&Size, NULL, &Key, &DescSize, &DescVer);
-  if (Status != EFI_BUFFER_TOO_SMALL || DescSize == 0) {
-    return EFI_DEVICE_ERROR;
-  }
-  Status = SfbMmGrowScratch (Size, DescSize);
+  Status = SfbMmInstallHook ();
   if (EFI_ERROR (Status)) {
+    mNumTz = 0;
     return Status;
   }
+
+  /* report what the merge adds right now */
   Size = mScratchSize;
-  Status = gBS->GetMemoryMap (&Size, mScratch, &Key, &DescSize, &DescVer);
-  if (EFI_ERROR (Status)) {
-    return Status;
+  Status = mOrigGetMemoryMap (&Size, mScratch, &Key, &DescSize, &DescVer);
+  if (!EFI_ERROR (Status)) {
+    NumAdd = SfbMmComputeAdditions (Size, DescSize);
+    for (j = 0; j < NumAdd; j++) {
+      Total += mAddition[j].Size;
+      DEBUG ((EFI_D_INFO, "SFB-MEM: + 0x%016lx-0x%016lx\n", mAddition[j].Base,
+              mAddition[j].Base + mAddition[j].Size - 1));
+    }
+    DEBUG ((EFI_D_INFO, "SFB-MEM: GetMemoryMap merge installed: %u TZ partition(s), "
+            "%u addition(s), %lu MiB\n", mNumTz, NumAdd, Total >> 20));
   }
-
-  mOrigGetMemoryMap = gBS->GetMemoryMap;
-  gBS->GetMemoryMap = SfbMmHookedGetMemoryMap;
-
-  NumAdd = SfbMmComputeAdditions (Size, DescSize);
-  for (j = 0; j < NumAdd; j++) {
-    Total += mAddition[j].Size;
-    DEBUG ((EFI_D_INFO, "SFB-MEM: + 0x%016lx-0x%016lx\n", mAddition[j].Base,
-            mAddition[j].Base + mAddition[j].Size - 1));
-  }
-  DEBUG ((EFI_D_INFO, "SFB-MEM: GetMemoryMap merge installed: %u TZ partition(s), "
-          "%u addition(s), %lu MiB\n", mNumTz, NumAdd, Total >> 20));
   return EFI_SUCCESS;
+}
+
+/* ------------------------------------------------------------------------ */
+/* CONFIG\MEMCFG                                                             */
+/* ------------------------------------------------------------------------ */
+
+/* Read CONFIG\MEMCFG into a pool buffer. Any failure returns NULL: the
+ * caller treats that as an empty table. */
+STATIC
+CHAR8 *
+SfbMmReadConfigFile (
+  OUT UINTN  *Size
+  )
+{
+  EFI_STATUS                        Status;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *Fs = NULL;
+  EFI_FILE_PROTOCOL                *Root = NULL;
+  EFI_FILE_PROTOCOL                *File = NULL;
+  EFI_FILE_INFO                    *Info = NULL;
+  UINTN                             InfoSize;
+  CHAR8                            *Buf = NULL;
+  UINTN                             ReadSize;
+
+  *Size = 0;
+  Status = SfbConfigStoreGetFs (&Fs, NULL);
+  if (EFI_ERROR (Status) || Fs == NULL) {
+    return NULL;
+  }
+  if (EFI_ERROR (Fs->OpenVolume (Fs, &Root)) || Root == NULL) {
+    return NULL;
+  }
+  Status = Root->Open (Root, &File, SFB_MM_CONFIG_PATH, EFI_FILE_MODE_READ, 0);
+  Root->Close (Root);
+  if (EFI_ERROR (Status) || File == NULL) {
+    return NULL;
+  }
+
+  InfoSize = SIZE_OF_EFI_FILE_INFO + 256;
+  Info = AllocatePool (InfoSize);
+  if (Info != NULL &&
+      !EFI_ERROR (File->GetInfo (File, &gEfiFileInfoGuid, &InfoSize, Info)) &&
+      Info->FileSize != 0 && Info->FileSize <= SFB_MM_CONFIG_MAX_BYTES) {
+    ReadSize = (UINTN)Info->FileSize;
+    Buf = AllocatePool (ReadSize + 1);
+    if (Buf != NULL) {
+      if (EFI_ERROR (File->Read (File, &ReadSize, Buf))) {
+        FreePool (Buf);
+        Buf = NULL;
+      } else {
+        Buf[ReadSize] = '\0';
+        *Size = ReadSize;
+      }
+    }
+  }
+  if (Info != NULL) {
+    FreePool (Info);
+  }
+  File->Close (File);
+  return Buf;
+}
+
+EFI_STATUS
+SfbMemFixupLoadConfig (
+  VOID
+  )
+{
+  CHAR8      *Text;
+  UINTN       Len;
+  UINT32      Rejected = 0;
+  UINT32      i;
+  EFI_STATUS  Status = EFI_SUCCESS;
+
+  mNumOverrides = 0;
+
+  Text = SfbMmReadConfigFile (&Len);
+  if (Text == NULL) {
+    DEBUG ((EFI_D_INFO, "SFB-MEM: no CONFIG\\MEMCFG, override table empty\n"));
+    return EFI_SUCCESS;
+  }
+
+  SfbMemParseConfig (Text, Len, mOverrides, ARRAY_SIZE (mOverrides),
+                     &mNumOverrides, &Rejected);
+  FreePool (Text);
+
+  for (i = 0; i < mNumOverrides; i++) {
+    DEBUG ((EFI_D_INFO, "SFB-MEM: MEMCFG %a: 0x%016lx+0x%lx %a attr 0x%lx\n",
+            mOverrides[i].Name, mOverrides[i].Desc.Base, mOverrides[i].Desc.Size,
+            SfbMemTypeName (mOverrides[i].Desc.Type), mOverrides[i].Desc.Attr));
+  }
+  if (Rejected != 0) {
+    DEBUG ((EFI_D_ERROR, "SFB-MEM: MEMCFG: %u invalid line(s) ignored\n", Rejected));
+  }
+
+  /* overrides without the TZ merge (no RAM partition protocol) still need
+   * the hook */
+  if (mNumOverrides != 0 && mOrigGetMemoryMap == NULL) {
+    Status = SfbMmInstallHook ();
+    if (EFI_ERROR (Status)) {
+      DEBUG ((EFI_D_ERROR, "SFB-MEM: MEMCFG: GetMemoryMap hook: %r, table dropped\n",
+              Status));
+      mNumOverrides = 0;
+    }
+  }
+  DEBUG ((EFI_D_INFO, "SFB-MEM: MEMCFG: %u override(s) active\n", mNumOverrides));
+  return Status;
 }

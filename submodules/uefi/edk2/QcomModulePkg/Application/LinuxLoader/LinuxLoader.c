@@ -267,6 +267,10 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
       DEBUG ((EFI_D_ERROR, "Booting without a config store: %r\n", Status));
     }
 
+    /* Operator memory map overrides (CONFIG\MEMCFG); an absent file is an
+     * empty table. Resident from here on, like the certificates. */
+    (VOID)SfbMemFixupLoadConfig ();
+
     /*
      * Pull the certificate classes into memory while the container is
      * mounted: fastboot runs with the store unmounted, so the auth and

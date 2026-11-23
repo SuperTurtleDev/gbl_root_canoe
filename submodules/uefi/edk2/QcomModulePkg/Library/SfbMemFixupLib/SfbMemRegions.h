@@ -20,9 +20,12 @@
 #ifdef SFB_HOST_TEST
   #include <stdint.h>
   #include <stddef.h>
+  typedef uint8_t   UINT8;
   typedef uint32_t  UINT32;
   typedef uint64_t  UINT64;
   typedef int32_t   INT32;
+  typedef size_t    UINTN;
+  typedef char      CHAR8;
   typedef int       BOOLEAN;
   typedef UINT64    EFI_STATUS;
   #define TRUE  1
