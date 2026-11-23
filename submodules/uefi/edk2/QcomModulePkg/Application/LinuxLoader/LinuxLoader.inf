@@ -120,6 +120,9 @@
 	SfbConfigStoreLib
 	# Security policy: certs, challenge auth, image verification.
 	SfbSecurityLib
+	# Memory fix-ups for EFI-stub kernels (memory attribute protocol,
+	# GetMemoryMap TZ merge). Always installed.
+	SfbMemFixupLib
 
 [LibraryClasses.AARCH64]
 
@@ -156,6 +159,9 @@
 
 [Protocols]
 	gSfbSecureBootProtocolGuid
+	gEfiMemoryAttributeProtocolGuid
+	gEfiCpuArchProtocolGuid
+	gEfiRamPartitionProtocolGuid
 	gEfiSimpleTextInputExProtocolGuid
 	gEfiBlockIoProtocolGuid
 	gEfiLoadedImageProtocolGuid

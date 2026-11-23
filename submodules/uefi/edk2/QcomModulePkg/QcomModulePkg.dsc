@@ -102,6 +102,10 @@
   # Security policy: SECURITY certs in the container, fastboot challenge
   # authorization and PE image signature verification.
   SfbSecurityLib|QcomModulePkg/Library/SfbSecurityLib/SfbSecurityLib.inf
+  # Platform memory fix-ups for EFI-stub kernels: EFI_MEMORY_ATTRIBUTE_PROTOCOL
+  # (fresh EfiLoaderCode is execute-never on this firmware) and the
+  # GetMemoryMap merge exposing TZ-usable DDR the firmware map omits.
+  SfbMemFixupLib|QcomModulePkg/Library/SfbMemFixupLib/SfbMemFixupLib.inf
   OrderedCollectionLib|MdePkg/Library/BaseOrderedCollectionRedBlackTreeLib/BaseOrderedCollectionRedBlackTreeLib.inf
   TimeBaseLib|EmbeddedPkg/Library/TimeBaseLib/TimeBaseLib.inf
   # Security-boot crypto: mbedtls-backed BaseCryptLib (X.509 parse, RSA/ECDSA

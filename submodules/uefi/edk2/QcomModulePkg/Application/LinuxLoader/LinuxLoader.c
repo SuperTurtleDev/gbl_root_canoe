@@ -79,6 +79,7 @@
 #include <Protocol/SimpleTextIn.h>
 #include "SuperFbMenu.h"
 #include <Library/SfbConfigStore.h>
+#include <Library/SfbMemFixup.h>
 #include <Library/SfbSecurity.h>
 
 #define MAX_APP_STR_LEN 64
@@ -210,6 +211,21 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
     DEBUG ((EFI_D_ERROR, "Unable to Allocate memory for Unsafe Stack: %r\n",
             Status));
     goto stack_guard_update_default;
+  }
+
+  /*
+   * Platform memory fix-ups, once per boot session and before anything
+   * else: the memory attribute protocol an EFI-stub kernel needs to make
+   * its relocated copy executable, and the GetMemoryMap view carrying the
+   * TZ-usable DDR the firmware map omits. They depend only on firmware
+   * protocols that exist at entry (CPU arch, RAM partitions), not on the
+   * storage stack or the config store, and they stay installed for every
+   * launch from the stored entries, the menu and fastboot. Not fatal: a
+   * failure only means launched payloads see the stock firmware behaviour.
+   */
+  Status = SfbMemFixupInstall ();
+  if (EFI_ERROR (Status)) {
+    DEBUG ((EFI_D_ERROR, "Memory fix-ups incomplete: %r\n", Status));
   }
 
   Status = EnumeratePartitions ();

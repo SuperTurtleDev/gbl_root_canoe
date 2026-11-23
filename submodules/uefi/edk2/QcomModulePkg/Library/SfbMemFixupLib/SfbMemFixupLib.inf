@@ -1,0 +1,42 @@
+## @file
+#  Platform memory fix-ups for the super-fastboot BDS: EFI_MEMORY_ATTRIBUTE_
+#  PROTOCOL on top of the firmware CPU arch protocol, and the GetMemoryMap
+#  merge that exposes TZ-usable DDR the firmware map omits.
+#
+#  Copyright (c) 2026, contributors to the canoe ABL tree.
+#  SPDX-License-Identifier: BSD-3-Clause
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = SfbMemFixupLib
+  FILE_GUID                      = 3B9D6E27-54A1-4F0C-8E72-A6C1D5F09B38
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = SfbMemFixupLib
+
+[Sources]
+  SfbMemRegions.h
+  SfbMemRegions.c
+  SfbMemAttr.c
+  SfbMemmapMerge.c
+  SfbMemFixup.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  ArmPkg/ArmPkg.dec
+  QcomModulePkg/QcomModulePkg.dec
+
+[LibraryClasses]
+  ArmLib
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  MemoryAllocationLib
+  UefiBootServicesTableLib
+  DxeServicesTableLib
+
+[Protocols]
+  gEfiCpuArchProtocolGuid           ## CONSUMES (page table attribute writes)
+  gEfiMemoryAttributeProtocolGuid   ## PRODUCES
+  gEfiRamPartitionProtocolGuid      ## CONSUMES (TZ RAM partition table)
